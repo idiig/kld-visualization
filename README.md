@@ -1,5 +1,9 @@
 # KLD visualization
 
+在线绘图：**https://idiig.github.io/kld-visualization/**
+
+源码：https://github.com/idiig/kld-visualization
+
 独立的 R 绘图和在线调参 App。GitHub Pages 使用 Shinylive/webR 在浏览器运行 R；本地与 Docker 使用普通 Shiny。两种模式共用绘图代码。
 
 仓库只包含展示代码、已有绘图结果数据和注释列表，不包含统计计算管线、原始语料、索引或计算配置。
@@ -66,3 +70,15 @@ Rscript scripts/package_data.R /path/to/precomputed/visualization
 浏览器版保留参数调整、筛选、放大图、网络图、结果表、复现命令和 SVG 下载。网络图统一由 R/igraph 绘制，布局与原 Graphviz 版本不同；无需外部 `neato`。日文 PNG/SVG 使用仓库附带的 Noto Serif CJK JP 字体，许可证见 `fonts/OFL.txt`。本地环境的字体可通过 `KLD_PLOT_FONT` 配置。
 
 浏览器按需下载所选表，已下载的表在当前浏览器会话中保留。大型词对表会占用较多内存，建议桌面浏览器。绘图由「描画」按钮触发。
+
+## 浏览器验证
+
+原生绘图检查为 `Rscript tests/smoke.R`。端到端检查使用 Chromium：
+
+```sh
+npm install --no-save playwright
+npx playwright install chromium
+KLD_SERVE=1 node tests/browser.mjs http://127.0.0.1:8080/
+```
+
+`KLD_SERVE=1` 自动启动/关闭 `_site` 的本地静态服务器，需要 Python 3；也可以先自行托管 `_site`，再向测试脚本传入网址。测试覆盖启动、数据选择、PNG 绘图、参数重绘、SVG 下载、结果表及词对绘图。

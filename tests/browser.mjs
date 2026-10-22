@@ -1,6 +1,9 @@
 // npm install --no-save playwright; npx playwright install chromium
 // Serve _site, then: node tests/browser.mjs http://localhost:8080/
 import fs from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+const staticServer = process.env.KLD_SERVE ? spawn('python3', ['-m', 'http.server', '8080', '--bind', '127.0.0.1', '--directory', '_site'], { stdio: 'ignore' }) : null;
+if (staticServer) await new Promise(resolve => setTimeout(resolve, 500));
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const browser = await chromium.launch({
   headless: true,
@@ -60,7 +63,7 @@ try {
   }, firstSource);
   console.log('PASS: parameter change re-renders plot');
   await frame.locator('a[data-value="表"]').click();
-  if (await frame.locator('#annotated_table tbody tr').count() < 1) throw new Error('Empty result table');
+  await frame.locator('#annotated_table tbody tr').first().waitFor();
   await frame.locator('a[data-value="プロット"]').click();
   await frame.evaluate(() => document.querySelector('#input_file').selectize.setValue('pair-entry-budatemajor-vs-gender-first4.tsv'));
   await frame.locator('#render').click();
@@ -74,4 +77,5 @@ try {
   throw e;
 } finally {
   await browser.close();
+  staticServer?.kill();
 }
