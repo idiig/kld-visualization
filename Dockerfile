@@ -2,7 +2,7 @@ FROM rocker/r-ver:4.5.2 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev libssl-dev libxml2-dev libfontconfig1-dev \
     libfreetype6-dev libpng-dev libtiff-dev libjpeg-dev libharfbuzz-dev \
-    libfribidi-dev libglpk-dev libarchive-dev fonts-noto-cjk \
+    libfribidi-dev libglpk-dev libarchive-dev libuv1-dev fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY install.R ./
