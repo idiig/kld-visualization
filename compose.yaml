@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "127.0.0.1:3838:3838"
+  pages:
+    profiles: [pages]
+    build:
+      context: .
+      target: pages
+    ports:
+      - "127.0.0.1:8080:80"

@@ -1,0 +1,8 @@
+.Rhistory
+.RData
+.Rproj.user/
+artifacts/
+_site/
+node_modules/
+# Only serialized, lossless plot inputs belong in Git.
+data/processed/visualization/*.tsv

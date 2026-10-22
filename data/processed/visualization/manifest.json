@@ -1,0 +1,66 @@
+{
+  "entry-vs-anthology-shinkokin.tsv": {
+    "asset": "entry-vs-anthology-shinkokin.rds",
+    "rows": 24582,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "fada3b8bc2001deda74cb8d48f3355b4"
+  },
+  "entry-vs-gender-first4.tsv": {
+    "asset": "entry-vs-gender-first4.rds",
+    "rows": 19278,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "ab201a953bac1bb75ea5515136a4388e"
+  },
+  "entry-vs-gender-gosen-shuui-goshuui.tsv": {
+    "asset": "entry-vs-gender-gosen-shuui-goshuui.rds",
+    "rows": 17460,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "cb1e955801e3e02faf616a74740e8eea"
+  },
+  "entry-vs-gender-kokin.tsv": {
+    "asset": "entry-vs-gender-kokin.rds",
+    "rows": 10722,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "eeef480ca7be5f55ef6ad47896b66664"
+  },
+  "kokin-female-without-filter.tsv": {
+    "asset": "kokin-female-without-filter.rds",
+    "rows": 312,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "699d15554f477d2bf70b475b19ce6e05"
+  },
+  "pair-entry-budatemajor-vs-gender-first4.tsv": {
+    "asset": "pair-entry-budatemajor-vs-gender-first4.rds",
+    "rows": 43626,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "field1": "部立大分類",
+    "field2": "語",
+    "source_md5": "5adf036a4b063479c131f1beb2cc8177"
+  },
+  "pair-entry-entry-vs-anthology-shinkokin.tsv": {
+    "asset": "pair-entry-entry-vs-anthology-shinkokin.rds",
+    "rows": 1814970,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "field1": "語",
+    "field2": "語",
+    "source_md5": "452f2b5dcf102f8b339b01f8c8c9b8b2"
+  },
+  "pair-entry-entry-vs-gender-first4.tsv": {
+    "asset": "pair-entry-entry-vs-gender-first4.rds",
+    "rows": 1021692,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "field1": "語",
+    "field2": "語",
+    "source_md5": "ebde6654a89cda40fe38892f06ef97e8"
+  }
+}

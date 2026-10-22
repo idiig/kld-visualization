@@ -1,0 +1,7 @@
+.git
+_site
+.Rhistory
+.RData
+artifacts
+node_modules
+data/processed/visualization/*.tsv

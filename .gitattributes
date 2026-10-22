@@ -1,0 +1,6 @@
+# Preserve imported annotation tables, including empty trailing TSV cells.
+data/reference/*.tsv -whitespace
+*.R text eol=lf
+*.nix text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
