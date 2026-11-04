@@ -1,66 +1,66 @@
 {
   "entry-vs-anthology-shinkokin.tsv": {
     "asset": "entry-vs-anthology-shinkokin.rds",
-    "rows": 24582,
+    "rows": 32776,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
     "field1": {},
     "field2": {},
-    "source_md5": "fada3b8bc2001deda74cb8d48f3355b4"
+    "source_md5": "f2df64c5a44e44704fccf669b21826f8"
   },
   "entry-vs-gender-first4.tsv": {
     "asset": "entry-vs-gender-first4.rds",
-    "rows": 19278,
+    "rows": 25704,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
     "field1": {},
     "field2": {},
-    "source_md5": "ab201a953bac1bb75ea5515136a4388e"
+    "source_md5": "1b2e2a329a9b76ea963e4c7945b57d22"
   },
   "entry-vs-gender-gosen-shuui-goshuui.tsv": {
     "asset": "entry-vs-gender-gosen-shuui-goshuui.rds",
-    "rows": 17460,
+    "rows": 23280,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
     "field1": {},
     "field2": {},
-    "source_md5": "cb1e955801e3e02faf616a74740e8eea"
+    "source_md5": "0654c3c40fac3e925f5132f0c5ad8b44"
   },
   "entry-vs-gender-kokin.tsv": {
     "asset": "entry-vs-gender-kokin.rds",
-    "rows": 10722,
+    "rows": 14296,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
     "field1": {},
     "field2": {},
-    "source_md5": "eeef480ca7be5f55ef6ad47896b66664"
+    "source_md5": "b86652b796a0416ba2feb217479c6a06"
   },
   "kokin-female-without-filter.tsv": {
     "asset": "kokin-female-without-filter.rds",
-    "rows": 312,
+    "rows": 416,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
     "field1": {},
     "field2": {},
-    "source_md5": "699d15554f477d2bf70b475b19ce6e05"
+    "source_md5": "f8acacd9a2f849f3054bb53a319097d9"
   },
   "pair-entry-budatemajor-vs-gender-first4.tsv": {
     "asset": "pair-entry-budatemajor-vs-gender-first4.rds",
-    "rows": 43626,
+    "rows": 58168,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
     "field1": "部立大分類",
     "field2": "語",
-    "source_md5": "5adf036a4b063479c131f1beb2cc8177"
+    "source_md5": "f92b1d7c227c37fc0e2e0329507f6fda"
   },
   "pair-entry-entry-vs-anthology-shinkokin.tsv": {
     "asset": "pair-entry-entry-vs-anthology-shinkokin.rds",
-    "rows": 1814970,
+    "rows": 2419960,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
     "field1": "語",
     "field2": "語",
-    "source_md5": "452f2b5dcf102f8b339b01f8c8c9b8b2"
+    "source_md5": "5789d4b0a65bb76c83f55a6e9d8359d4"
   },
   "pair-entry-entry-vs-gender-first4.tsv": {
     "asset": "pair-entry-entry-vs-gender-first4.rds",
-    "rows": 1021692,
+    "rows": 1362256,
     "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
     "field1": "語",
     "field2": "語",
-    "source_md5": "ebde6654a89cda40fe38892f06ef97e8"
+    "source_md5": "c5e8a726240d33409dbddd92eb75b067"
   }
 }
