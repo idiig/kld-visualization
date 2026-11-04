@@ -13,10 +13,17 @@
 #     (最后画、盖在最上层)，x轴右端和y轴顶端各标一次value_label，x轴左端/
 #     y轴底端合并成一个not_value_label(不然会在左下角重叠两次)
 #
-# x/y轴含义: x=frequency(TARGET measured against POINT，"TARGET→POINT"方向，
-# corpus→word)，y=keyness(POINT measured against TARGET，"POINT→TARGET"方向，
-# word→corpus)——两个轴都是同一个relationship的signed KLD读数，不是"一个KLD、
-# 一个粗频度"。
+# x/y轴含义(2026-11-05最终版): x=keyness(POINT measured against TARGET，
+# "POINT→TARGET"方向，word→corpus的signed KLD)，范围固定在[-1,1](配合
+# kld_variant=keyassoc这类理论本身就以±1为界的量，见.compute_axis_ranges，
+# 不随数据/筛选变化)。y=频度(调整后)——不是KLD，是node_size列本身
+# (log2(n_target)经表生成时max-min正规化过的值，之前一直是点大小的依据，
+# 见.size_scale旧注释)，非负，范围固定在[0,1]。点的大小不再对应频度，改用
+# 该点/pair自身的dispersion——相当于把"频度(调整后)"和"dispersion"原来
+# 各自的展示位置(y轴↔点大小)互换了一次(2026-11-05用户确认：只换纵轴，
+# 横轴keyness不变；一开始误把y轴理解成另一个方向的signed KLD，后经用户
+# 纠正为"粗频度的调整频度"，即2026-10-17就定下来的node_size计算；word/
+# pair两版表都要换)。
 #
 # 输入表(见extract_point_vs_target.py)：列 point, keyness, frequency, total_freq,
 # n_target, n_not_target, dispersion。
@@ -46,21 +53,23 @@ library(ggrepel)
 # nofreq把signed KLD线性映射到[0,1](kld_lower->0, kld_upper->1，见
 # kld.py:kld_and_nofreq的docstring)，不是以0为中心的signed范围——0本身
 # 是"全部落在other一侧"的极端值，不是"无关联"的中性点，0.5(量表中点)才是
-# 该画参考虚线的位置。raw(signed)模式保持"以0为中性点、按数据范围留白"的
-# 画法。nofreq轴范围基本上钉在[0,1]，但留一点点边距(3%)——median(keyness)/
-# median(frequency)经常恰好等于0或1(样本本身就这么分布，2026-09-14在kokin
-# 上实测到median就是0)，完全不留白的话median那条辅助线会正好画在坐标轴
-# 边框上，被边框本身盖住看起来像没画出来；留一点点边距能让贴边的辅助线
-# 可见，同时因为3%很小，看起来仍然跟"钉死在[0,1]"没有明显区别。
+# 该画参考虚线的位置。raw(signed)模式下两根轴现在是两种不同性质的量，
+# 范围各自钉死在各自的理论边界、不再按range(d$frequency)/range(d$keyness)
+# 现算(2026-11-05改，用户要求"轴的范围...不随node筛选调整")：
+#   - x(keyness，point→target signed KLD)钉在[-1,1]——kld_variant=keyassoc
+#     这类量理论上界就是±1。
+#   - y(频度/调整后，直接读node_size列——log2(n_target)正规化，不是KLD)
+#     钉在[0,1]——这个量本来就非负、且表生成时已经按max归一化过，理论
+#     上界是[0,1]不是±1(2026-11-05用户纠正：一开始误把y轴理解成另一个
+#     方向的signed KLD、钉在[-1,1]，用户确认"0到1更合适")。
+# 留一点点边距(3%，跟nofreq同一个比例、同一个理由：median/mean参考线
+# 有时正好落在边界上，完全不留白会被边框盖住看不见)——x的diff(xr)=2
+# 所以xpad=0.06，y的diff(yr)=1所以ypad=0.03，两边占比都是3%。
 .compute_axis_ranges <- function(d, nofreq) {
   if (nofreq) {
     list(xr = c(0, 1), yr = c(0, 1), xpad = 0.03, ypad = 0.03, neutral = 0.5)
   } else {
-    xr <- range(d$frequency)
-    yr <- range(d$keyness)
-    # 留白比例从8%调到15%——跟nofreq模式现在的视觉留白比对下偏小
-    # (2026-09-14确认"两者的视觉留白需要近似，目前非nofreq的留白过小")
-    list(xr = xr, yr = yr, xpad = diff(xr) * 0.15, ypad = diff(yr) * 0.15, neutral = 0)
+    list(xr = c(-1, 1), yr = c(0, 1), xpad = 0.06, ypad = 0.03, neutral = 0)
   }
 }
 
@@ -269,34 +278,21 @@ filter_by_node_frequency <- function(d, threshold) {
     if (!is.null(x_break)) .draw_axis_break_mark(x_break$main_frac, side = 1, usr = usr)
     if (!is.null(y_break)) .draw_axis_break_mark(y_break$main_frac, side = 2, usr = usr)
   } else {
-    # x轴(frequency, TARGET→POINT方向)量级通常远小于y轴(keyness, POINT→TARGET)，
-    # 刻度位置不变，显示数字除以x_scale，缩放比例写进标题——用底数^指数
-    # (10^.(x_exp))的plotmath写法显示成"×10⁻³"这种科学计数法样式，不是
-    # 直接打印0.001这种十进制小数(2026-09-22改，用户反馈原来的纯小数
-    # 不够直观)。Only "obs" (unbounded [0,+inf)) actually needs this --
-    # "norm" is already rescaled into roughly (-1,1), so the same log10
-    # floor() trick just produces a spurious "10^-1" suffix for no
-    # readability gain (confirmed with the user, 2026-10-15); KLD_VARIANT
-    # being unset (NULL, an older/other caller) keeps the old exponent
-    # behavior rather than guessing.
-    needs_exponent <- is.null(kld_variant) || identical(kld_variant, "obs")
-    x_ticks <- pretty(xr)
-    if (needs_exponent) {
-      x_exp <- floor(log10(max(abs(xr))))
-      x_scale <- 10^x_exp
-      axis(1, at = x_ticks, labels = format(x_ticks / x_scale, trim = TRUE),
-           col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-      axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-      title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"
-                           ~ (10^.(x_exp))),
-            ylab = bquote(plain(dispersion) * "(" * .(point_label) * ")"), line = title_line)
-    } else {
-      axis(1, at = x_ticks, labels = format(x_ticks, trim = TRUE),
-           col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-      axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
-      title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
-            ylab = bquote(plain(dispersion) * "(" * .(point_label) * ")"), line = title_line)
-    }
+    # 轴固定在各自的理论边界(见.compute_axis_ranges)后，pretty(xr)/pretty(yr)
+    # 算出来的刻度本身就是好看的小数——之前这里有一段按kld_variant判断要不要
+    # 把x刻度数字除以10^x_exp、显示成科学计数法的逻辑(当时x轴是量级很小的
+    # 原始frequency列)，轴改成固定范围后那段逻辑永远算出exponent=0，只会在
+    # 标题后面多出一个没用的"(10^0)"，所以跟着这次轴改动一起删掉(2026-11-05)。
+    # x轴=keyness(point→target signed KLD)不变；y轴=频度(调整后)，2026-11-05
+    # 改回来——中间先后显示过dispersion、又短暂显示过另一个方向的signed KLD，
+    # 最终用户要的是频度本身的调整值(node_size列，log2(n_target)正规化，
+    # 不是KLD)，所以y轴标题不再用KLD的plotmath格式，dispersion现在改到点的
+    # 大小上(见draw_point_vs_target()里d$node_size的赋值)。
+    axis(1, at = pretty(xr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
+    axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
+    title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
+          ylab = bquote(plain(frequency) * "(" * .(point_label) * ")"),
+          line = title_line)
   }
   # neutral(理论中性点)如果落在被断轴压缩的那根轴上，要用同一个fwd()换算
   # 成压缩后的位置，不然虚线会画在跟数据脱节的地方
@@ -306,41 +302,34 @@ filter_by_node_frequency <- function(d, threshold) {
   # 中位数是"这批样本对半分"的经验线，跟neutral(population baseline无偏离的
   # 理论中性点)是两个不同概念，不跨图可比——单独画一条实线，不替换neutral的
   # 虚线。d$keyness/d$frequency如果被断轴压缩过，这里读到的已经是压缩后的
-  # 坐标(.apply_nofreq_breaks原地替换过)，不需要再额外变换
-  dispersion_median <- median(d$keyness)
-  dispersion_mean <- mean(d$keyness)
-  abline(h = dispersion_median, v = median(d$frequency), col = "#AAAAAA", lty = 1)
+  # 坐标(.apply_nofreq_breaks原地替换过)，不需要再额外变换。y_median/y_mean
+  # 这两个变量名原来叫dispersion_median/dispersion_mean(d$keyness当时确实
+  # holds dispersion)，2026-11-05改成y轴=frequency后改名，避免名字跟实际
+  # 读到的量脱节
+  y_median <- median(d$keyness)
+  y_mean <- mean(d$keyness)
+  abline(h = y_median, v = median(d$frequency), col = "#AAAAAA", lty = 1)
   # Mean line + text labels for both (2026-10-15, user-requested) --
-  # dispersion's own median/mean only (the X-axis median line above
+  # the Y axis's own median/mean only (the X-axis median line above
   # stays unlabeled, out of scope here). Placed at xr[2] (the data
   # range's own right edge, clipped to the panel, xpd=FALSE) rather
   # than the canvas edge -- the color legend/size legend already own
   # the margin past the panel (see .draw_legend/.draw_size_legend),
   # text out there would collide with them.
-  abline(h = dispersion_mean, col = "#888888", lty = 3)
-  text(xr[2], dispersion_median, labels = sprintf("median %.3f", dispersion_median),
+  abline(h = y_mean, col = "#888888", lty = 3)
+  text(xr[2], y_median, labels = sprintf("median %.3f", y_median),
        col = "#AAAAAA", cex = 0.55, adj = c(1, -0.3))
-  text(xr[2], dispersion_mean, labels = sprintf("mean %.3f", dispersion_mean),
+  text(xr[2], y_mean, labels = sprintf("mean %.3f", y_mean),
        col = "#888888", cex = 0.55, adj = c(1, -0.3))
 }
 
-# 点の大きさはtotal_freq(n_target+n_not_target)ではなくn_target(target
-# 語料Tの中だけでの生頻度)基準——2026-10-17、ユーザー指摘：生頻度を線形
-# のままnode sizeに反映すると、低頻度語同士がほぼ同じ大きさになってしまう
-# (freq/max_freqの比がほとんどの点で0に近いまま)。対数(底2、+1でfreq=0
-# もlog(1)=0に落ちるようにする)を取ってからmax-min正規化(Tに一度も出ない
-# 語のlog=0が既にこの正規化の下限なので、実質ただのL(w)/max_v L(v)に
-# 簡約できる、ユーザー自身の提示した式通り)。
-#
-# この正規化計算(log2 + 全体のmax)自体はscripts/patches/visprepare.py
-# 側(表生成時、_point_row/_max_log_n_target)で一度だけ行い、結果を
-# node_size列としてtsvに直接書き出す——ここ(Rの描画側)では一切計算せず、
-# 読み込んだnode_size列をそのままsqrt(面積比例)の式に差し込むだけ
-# (2026-10-17、ユーザー確認済み：「在生成表格的部分进行修改避免反复
-# 计算」——Shiny appは「描画」を押すたびにこの関数を数千行分呼び直す
-# ので、全体のmaxを取る集約計算を毎回Rでやり直すのではなく、表を作る
-# 時に1回だけ計算して列に焼き込んでおく)。0.7/0.3/1.1は2026-09-26
-# 確認済みの大きさ係数、変更なし。
+# 点の大きさは2026-11-05以降dispersion基準(draw_point_vs_target()の冒頭で
+# d$node_size <- d$dispersionと差し替え済み、.draw_size_legend自身の
+# コメント参照)——以前はn_target(頻度)のlog2正規化だったが、dispersionは
+# もともと表生成時に0〜1に近い範囲の指標として計算済みの列なので、Rの
+# 描画側でさらに正規化し直す必要はなく、そのままsqrt(面積比例)の式に
+# 差し込むだけでよい。0.7/0.3/1.1は2026-09-26確認済みの大きさ係数、
+# 変更なし(入力の意味が変わっただけで、面積比例の式自体はそのまま)。
 .size_scale <- function(node_size) 0.7 * (0.3 + 1.1 * sqrt(node_size))
 
 # 扩大面板里点的放大倍数(见render_zoomed_scatter_panel)——取景框越窄，
@@ -693,14 +682,17 @@ filter_to_annotated_points <- function(rows, badge_rows) {
     hi <- matched[matched$keyness > neutral, ]
     lo <- matched[matched$keyness <= neutral, ]
   } else {
-    # Ranks by d$frequency, not d$keyness -- since the 2026-10-15 axis
-    # swap in draw_point_vs_target() (d$frequency <- d$keyness;
-    # d$keyness <- d$dispersion, always applied before this function
-    # ever runs), d$frequency is the one still holding the original
-    # forward KLD (point->target), while d$keyness now holds
-    # dispersion. Default labels pick the forward-KLD extremes (most
-    # positive/negative point->target divergence), not dispersion
-    # extremes, confirmed with the user 2026-10-15.
+    # Ranks by d$frequency, not d$keyness -- since the axis swap in
+    # draw_point_vs_target() (always applied before this function ever
+    # runs; 2026-11-05: d$frequency <- d$keyness, d$keyness <- the
+    # adjusted frequency (the original node_size column), d$node_size <-
+    # d$dispersion), d$frequency is the one still holding the original
+    # forward KLD (point->target), while d$keyness now holds adjusted
+    # frequency (non-negative, not a KLD at all) instead of dispersion.
+    # Default labels pick the forward-KLD extremes (most positive/negative
+    # point->target divergence), not frequency/dispersion extremes,
+    # confirmed with the user 2026-10-15 (axis choice) and 2026-11-05
+    # (frequency/dispersion swap, see the file header comment).
     hi <- d[order(-d$frequency), ][seq_len(min(label_top_n, nrow(d))), ]
     lo <- d[order(d$frequency), ][seq_len(min(label_top_n, nrow(d))), ]
   }
@@ -1465,30 +1457,30 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   }
 }
 
-# 点大小代表total_freq(粗频度)，之前一直没有图例说明这层映射
-# (2026-09-14确认"还缺少一个，点的大小相关的legend")。挑3个代表性频次
-# (min/median/max)，各画一个跟散点图正文同一个size_scale公式算出来的点，
-# 数值标在左边(跟dispersion渐变条一样的"数字在左、图形在右"布局)，放在
-# 画布右上角、dispersion渐变条上方那一小块预留空间里。
-# NODE_SIZEはN_TARGETと同じ順番・同じ長さのベクトル(visprepare.py側で
-# 表生成時に書き込み済みのnode_size列、.size_scale自身のコメント参照)。
-# 凡例は代表値3つ(最小/中央値/最大のn_target)を見せたいが、中央値は
-# 偶数個の時2つの中間値の平均になり、実データのどの行の値とも一致しない
-# ことがある -- 「一番近い実際の行」を探してその行自身のn_target(表示
-# する数字)とnode_size(.size_scaleにそのまま渡す)を両方読む、Rでlog2/
-# maxを計算し直すことはしない(2026-10-17、ユーザー確認済み：表生成時に
-# 1回だけ計算)。
-.draw_size_legend <- function(n_target, node_size, pin, in_to_data_x, in_to_data_y, pch = 1) {
+# 点大小代表dispersion(2026-11-05改，之前是total_freq/n_target；见
+# draw_point_vs_target()里d$node_size<-d$dispersion的赋值、.size_scale
+# 自身的注释)。挑3个代表性数值(min/median/max)，各画一个跟散点图正文
+# 同一个size_scale公式算出来的点，数值标在左边(跟dispersion渐变条一样的
+# "数字在左、图形在右"布局)，放在画布右上角、dispersion渐变条上方那一小块
+# 预留空间里。SIZE_VALUE就是d$node_size(现在等于d$dispersion)，标签数字
+# 和画出来的点大小直接读同一个值——不再像以前(标n_target、按大小画
+# node_size)那样是两个不同列，所以只需要一个参数。凡例是代表值3个
+# (最小/中央值/最大)，中央值在偶数个时是2个中间值的平均，实データのどの
+# 行の値とも一致しないことがある -- 「一番近い実際の行」を探してその行
+# 自身の値を読む(2026-10-17確認済みの「表生成時に1回だけ計算、Rで再計算
+# しない」という原則は変わらず、dispersion自体もtsv生成時に書き込まれた
+# 列のまま)。
+.draw_size_legend <- function(size_value, pin, in_to_data_x, in_to_data_y, pch = 1) {
   legend_cex <- 0.5
   x_in <- pin[1] - 0.15
-  target_values <- c(min(n_target), median(n_target), max(n_target))
-  closest_idx <- vapply(target_values, function(v) which.min(abs(n_target - v)), integer(1))
-  labels <- n_target[closest_idx]
-  sizes <- node_size[closest_idx]
+  target_values <- c(min(size_value), median(size_value), max(size_value))
+  closest_idx <- vapply(target_values, function(v) which.min(abs(size_value - v)), integer(1))
+  sizes <- size_value[closest_idx]
+  labels <- sprintf("%.3f", sizes)
   gap_in <- 0.16
   y_top_in <- pin[2] - 0.22
   text(in_to_data_x(pin[1] - 0.05), in_to_data_y(pin[2] - 0.06),
-       "頻度", cex = legend_cex, adj = c(1, 0), xpd = NA)
+       "分散", cex = legend_cex, adj = c(1, 0), xpd = NA)
   for (i in seq_along(labels)) {
     y_in <- y_top_in - (i - 1) * gap_in
     points(in_to_data_x(x_in), in_to_data_y(y_in), pch = pch,
@@ -1548,34 +1540,19 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # where panel_coord_converters's own in_to_data_*(positive inches)
 # convention isn't what's needed -- this wants negative/leftward
 # offsets instead).
-# X axis keeps value_label/not_value_label (the point->target KLD's
-# own sign, unchanged meaning). Y axis is "uniform"<->"concentrated" --
-# dispersion's own meaning (low = concentrated in a few texts =
-# "concentrated", high = spread evenly relative to those texts' own
-# weight = "uniform"), fixed wording, not a caller-supplied label,
-# since dispersion's semantics don't vary by dataset the way
-# value_label does -- "concentrated" goes at the bottom (low
-# dispersion, near the axis origin), "uniform" at the top (high
-# dispersion). Renamed 2026-10-17 from "specific"/"common": dispersion
-# only measures how proportionally a point's occurrences are spread
-# across the handful of lines it itself touches (see
-# level2_line_matrix's own docstring -- its population total is scoped
-# to those lines alone, never the whole corpus), so it carries no
-# information about how widely/frequently a word is actually used.
-# "common" wrongly implied the latter, and is actively misleading for
-# low-frequency points: a hapax (n=1 line touched) always gets
-# dispersion EXACTLY 1.0 by construction (P and Q collapse to the same
-# single-point distribution, giving KLD=0), regardless of whether the
-# word is remotely common in any ordinary sense -- confirmed with the
-# user via a concrete example (あかしがた【明石潟】, total_freq=1,
-# dispersion=1.0). "uniform"/"concentrated" describe the actual
-# mechanism (proportional-to-local-weight vs skewed) without that
-# false implication. The Y axis itself is plotted the ordinary way
-# (usr[3]=min/bottom, usr[4]=max/top -- the 2026-10-15 axis swap moved
-# dispersion onto Y but didn't flip its own orientation), so this has
-# to match _normalize_dispersion's own direction (close to 0 =
-# concentrated, close to 1 = uniform -- see that function's own
-# docstring in visprepare.py) directly, not the reverse.
+# X axis keeps value_label/not_value_label (point->target signed KLD, a
+# genuinely bipolar "F" vs "not F" quantity). Y axis is fixed
+# "confident"/"inconfident" wording (2026-11-05, user-specified) --
+# Y is adjusted frequency (the original node_size column, see
+# draw_point_vs_target()'s own swap-block comment and the file header
+# comment): a low value means the point/pair itself is rare (sparse
+# evidence, so whatever its X-axis KLD reading says is less trustworthy),
+# a high value means it is well-attested (frequent, so its KLD reading
+# rests on more evidence) -- "inconfident" goes at the bottom (low
+# adjusted frequency, near the axis origin), "confident" at the top
+# (high adjusted frequency), same fixed-wording pattern dispersion
+# used to have here ("uniform"/"concentrated") before dispersion moved
+# to node size.
 .draw_axis_direction_arrows <- function(value_label, not_value_label) {
   usr <- par("usr"); pin <- par("pin")
   x_per_in <- diff(usr[1:2]) / pin[1]
@@ -1606,9 +1583,9 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   y_label_x <- usr[1] - label_line * line_in * x_per_in
   arrows(y_arrow_x, usr[3], y_arrow_x, usr[4], code = 3, length = 0.05,
          angle = 25, col = "#888888", lwd = 0.8, xpd = NA)
-  text(y_label_x, usr[3], "concentrated", srt = 90, adj = c(0, 0.5), cex = label_cex,
+  text(y_label_x, usr[3], "inconfident", srt = 90, adj = c(0, 0.5), cex = label_cex,
        col = "#888888", xpd = NA)
-  text(y_label_x, usr[4], "uniform", srt = 90, adj = c(1, 0.5), cex = label_cex,
+  text(y_label_x, usr[4], "confident", srt = 90, adj = c(1, 0.5), cex = label_cex,
        col = "#888888", xpd = NA)
 }
 
@@ -1950,18 +1927,31 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # very end of this function.
   d$.row_id <- seq_len(nrow(d))
   d_raw_cols <- d
-  # 纵軸→dispersion、横軸→point2target(旧keyness)に恒久的に差し替え
-  # (2026-10-15、ユーザー確認済み：frequencyは図から完全に外す。トグルで
-  # はなく今後はこれが唯一のビュー)。全てのフィルタ(上のfilter_by_*)は
-  # まだ元のdispersion/total_freq/keyness列を読む必要があるので、ここ
-  # (フィルタの後、zoom_box/ranges計算の前)が差し替えの場所——下流の
-  # zoom_box解決/badge選定/ネットワークグリフ配置は全部d$frequency(x)/
-  # d$keyness(y)を素直に読むだけなので、ここで値を入れ替えておけば無改修
-  # で動く。neutral参考線/hi-lo色分け(どちらもd$keyness>neutralという
-  # 符号付きKLD前提のロジック)はdispersionには意味を持たない組み合わせに
-  # なるが、ユーザー確認済み：今は直さず既知の見た目のクセとして残す。
+  # 横軸→point2target(旧keyness、2026-10-15から変更なし)、縦軸→頻度(調整後)
+  # に恒久的に差し替え。この「調整後の頻度」はtsvの生のfrequency列(KLD)
+  # ではなくnode_size列そのもの——log2(n_target)を表生成時にmax-min正規化
+  # 済みの値で、以前はこれで点の大きさを決めていた(.size_scale自身の旧
+  # コメント参照)。点の大きさは逆にdispersion(そのpoint/pair自身の分布の
+  # 均等さ)に差し替える——結果として頻度(調整後)とdispersionが担っていた
+  # 表示(軸位置と点の大きさ)を入れ替えた形になる(2026-11-05、ユーザー
+  # 確認済み：改めるのは縦軸だけで横軸のkeynessはそのまま、word/pair両方
+  # の表に適用。最初frequency列=KLDだと誤解して軸に出したが、ユーザーが
+  # 「粗頻度の調整頻度」と明確に訂正——2026-10-17のnode_size計算の議論
+  # そのものを指す。ファイル先頭のコメントも参照)。全てのフィルタ(上の
+  # filter_by_*)はまだ元のdispersion/total_freq/keyness/node_size列を
+  # 読む必要があるので、ここ(フィルタの後、zoom_box/ranges計算の前)が
+  # 差し替えの場所——下流のzoom_box解決/badge選定/ネットワークグリフ配置は
+  # 全部d$frequency(x)/d$keyness(y)/d$node_size(大きさ)を素直に読むだけ
+  # なので、ここで値を入れ替えておけば無改修で動く。neutral参考線/hi-lo
+  # 色分け(どちらもd$keyness>neutralという符号付きKLD前提のロジック)は
+  # d$keynessが今は頻度(調整後、非負、符号なし)を保持しているので、本来の
+  # 前提とは噛み合わなくなるが、dispersionだった2026-10-15時点と同じく
+  # 「既知の見た目のクセとして残す、今は直さない」というユーザー確認済み
+  # の方針を踏襲する。
+  adjusted_frequency <- d$node_size
   d$frequency <- d$keyness
-  d$keyness <- d$dispersion
+  d$keyness <- adjusted_frequency
+  d$node_size <- d$dispersion
   # zoom_box在这里(用pre-break的d$frequency/keyness当min/max兜底)解析，
   # 早于下面的.apply_nofreq_breaks——2026-09-22发现的bug("选了zoom_box选项
   # 但还没填4个边界时会报错")修复后就是这个顺序，沿用不变
@@ -2069,7 +2059,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                tie_boxes = tie_boxes)
 
   .draw_axis_direction_arrows(value_label, not_value_label)
-  .draw_size_legend(d$n_target, d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
+  .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
                      pch = .representative_pch(d$point_pch))
   .draw_shape_legend(d, pc$pin, pc$in_to_data_x, pc$in_to_data_y)
   .draw_legend(colors$type_ramps, colors$signed_range, colors$legend_cols, default_label, pc$pin,
@@ -2254,7 +2244,7 @@ render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label
   src_ndc_y <- grconvertY(c(zbox$y1, zbox$y2), from = "user", to = "ndc")
   pc <- panel_coord_converters()
   .draw_axis_direction_arrows(value_label, not_value_label)
-  .draw_size_legend(d$n_target, d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
+  .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
                      pch = .representative_pch(d$point_pch))
   .draw_shape_legend(d, pc$pin, pc$in_to_data_x, pc$in_to_data_y)
   .draw_legend(colors$type_ramps, colors$signed_range, colors$legend_cols, default_label, pc$pin,
