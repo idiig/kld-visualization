@@ -975,10 +975,18 @@ filter_to_annotated_points <- function(rows, badge_rows) {
       }
       line_w_in <- vapply(shown, strwidth, numeric(1), cex = badge_cex, family = fam, units = "inches")
       line_h_in <- vapply(shown, strheight, numeric(1), cex = badge_cex, family = fam, units = "inches")
+      # 名单多行堆叠时行间距单独放大到label_gap_in的1.8倍(2026-11-05，
+      # 用户反馈"annotation的字太紧了")——label_gap_in本身还要继续给
+      # box-to-list的间距、badge跟badge之间的排版间距用，不能直接改它的
+      # 定义，只在这里(以及.draw_badge_box里实际画字的同一处公式)单独放大，
+      # 两边用同一个倍数才能保证算出来的框高度跟实际画的字真的对得上
+      # (combined_h_in要是比实际渲染矮，排版算法会以为这块区域更小，
+      # 画出来会跟别的badge/点重叠)。
+      line_gap_in <- label_gap_in * 1.8
       return(list(kind = "word_list", word_list = shown, count_label = count_label,
                    box_w_in = box_w_in, box_h_in = box_h_in,
                    combined_w_in = max(max(line_w_in), box_w_in),
-                   combined_h_in = box_h_in + label_gap_in + sum(line_h_in) + label_gap_in * length(shown)))
+                   combined_h_in = box_h_in + label_gap_in + sum(line_h_in) + line_gap_in * length(shown)))
     }
     # ここに来る時点でis_pairなら(group_size==1でも)membersは常に非NULLで
     # 既に.concept_display_text済み("w1・w2"結合後の文字列) -- 二重に
@@ -1191,12 +1199,15 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   # Confirmed with the user 2026-10-15.
   word_text_col <- "#111111"
   if (identical(g$kind, "word_list")) {
+    # line_gap_in跟.badge_geometry()算combined_h_in时用的倍数(1.8)保持
+    # 一致，否则这里实际画出来的高度会跟排版阶段预留的框高度对不上
+    line_gap_in <- label_gap_in * 1.8
     y_in <- count_bot_in - label_gap_in
     for (line in g$word_list) {
       h_in <- strheight(line, cex = badge_cex, family = fam, units = "inches")
       text(cx, in_to_data_y(y_in), labels = line,
            cex = badge_cex, family = fam, col = word_text_col, adj = c(0.5, 1), xpd = NA)
-      y_in <- y_in - h_in - label_gap_in
+      y_in <- y_in - h_in - line_gap_in
     }
   } else {
     text(cx, in_to_data_y(count_bot_in - label_gap_in), labels = g$word,
@@ -1209,8 +1220,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 .draw_badges <- function(rows, fill, border, text_col, word_col, badge_layout,
                           d_all, value_label, not_value_label, badge_cex, fam,
                           label_gap_in, x_per_in, y_per_in, data_to_in_x, data_to_in_y,
-                          in_to_data_x, in_to_data_y, pin, neutral, max_group_members = 50,
-                          tie_boxes = list()) {
+                          in_to_data_x, in_to_data_y, pin, neutral, max_group_members = 50) {
   n <- nrow(rows)
   if (n == 0) return(invisible(NULL))
   if (length(fill) == 1) fill <- rep(fill, n)
@@ -1255,28 +1265,10 @@ filter_to_annotated_points <- function(rows, badge_rows) {
                      fill[i], border[i], text_col[i], word_col[i], badge_cex, fam,
                      label_gap_in, x_per_in, y_per_in, in_to_data_x, in_to_data_y)
   }
-  # ROWSの各点がtie_boxes(.compute_x_tie_boxesの出力、{key: {x1,y1,x2,
-  # y2}})のどれかに属していれば、連結線の出発点はその点自身ではなく箱の
-  # 辺にする(2026-10-17、ユーザー確認済み：「線がもし框なら、框のedgeから
-  # 出発。もし点なら、そのまま」)。出発点を「箱の中でbadge自身の位置に
-  # 一番近い点」にクランプするだけで済む -- badgeは普通箱の外にあるので、
-  # x/yそれぞれ独立に[box_x1,box_x2]/[box_y1,box_y2]へクランプした結果は
-  # そのまま箱の辺(角を含む)に乗る、標準的な「矩形上の最近点」の求め方。
+  # 连线起点就是点自身的位置(2026-11-05起——同值点的外接框功能已删除，
+  # 之前这里会把起点clamp到框的边上，见git历史)。
   start_x_in <- px_in
   start_y_in <- py_in
-  if (length(tie_boxes) > 0) {
-    keys <- paste(rows$n_target, rows$n_not_target, sep = "/")
-    for (i in seq_len(n)) {
-      box <- tie_boxes[[keys[i]]]
-      if (is.null(box)) next
-      box_x_in <- data_to_in_x(c(box$x1, box$x2))
-      box_y_in <- data_to_in_y(c(box$y1, box$y2))
-      badge_cx_in <- resolved$x1[i] + combined_w[i] / 2
-      badge_cy_in <- resolved$y1[i] + combined_h[i] / 2
-      start_x_in[i] <- min(max(badge_cx_in, min(box_x_in)), max(box_x_in))
-      start_y_in[i] <- min(max(badge_cy_in, min(box_y_in)), max(box_y_in))
-    }
-  }
   for (i in seq_len(n)) {
     # 连线颜色用word_col(不透明版本)而不是rows$point_col(默认蓝点带
     # alpha=0.35半透明)——连线也是画在空白画布上(道理跟word_col本身的
@@ -1988,13 +1980,12 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                annotate_nontarget_only, annotate_point_exclude,
                                badge_selection, frontier_n, zoom_box, aggregate_locators,
                                annotate_pairs = annotate_pairs)
-  # .draw_x_tie_boxes自身のdocstring参照：aggregate_locators=TRUEの時、
-  # badge_rowsは既に(n_target, n_not_target, kind)で1行にまとめられた後
-  # (.aggregate_locator_groups)なので、同じキーでもう一度グループ化しよ
-  # うとしても各グループが必ず1行になり、箱が一つも描けなくなる
-  # (2026-10-17にユーザー報告で発覚)。aggregate_locators=FALSEで同じ
-  # select_badgesをもう一度呼び、集約前の個々の点(「annotateされた点」
-  # ではあるが、まだ合算されていない実際の座標を持つ行)を別に用意する。
+  # aggregate_locators=TRUEの時、badge_rowsは既に(n_target, n_not_target,
+  # kind)で1行にまとめられた後(.aggregate_locator_groups)なので、表
+  # タブ用の「annotateされた点」一覧にはそのまま使えない(合算後の代表行
+  # 1つしか出てこなくなる)。aggregate_locators=FALSEで同じselect_badges
+  # をもう一度呼び、集約前の個々の点(「annotateされた点」ではあるが、
+  # まだ合算されていない実際の座標を持つ行)を別に用意する。
   tie_box_rows <- select_badges(d, annotate_words, label_top_n, neutral,
                                  annotate_nontarget_only, annotate_point_exclude,
                                  badge_selection, frontier_n, zoom_box,
@@ -2042,10 +2033,6 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   fam <- getOption("kld.plot.font_family", "Hiragino Mincho ProN")
   label_gap_in <- strheight("あ", cex = badge_cex, family = fam) * 0.5
 
-  tie_boxes <- .compute_x_tie_boxes(
-    tie_box_rows, point_radius_in = .cex_to_radius_in(.size_scale(tie_box_rows$node_size))
-  )
-  .draw_x_tie_boxes(tie_boxes)
   badge_colors <- .badge_color_from_point(badge_rows)
   .draw_badges(badge_rows, fill = badge_colors$fill, border = badge_colors$border_col,
                text_col = badge_colors$text_col, word_col = badge_colors$word_col,
@@ -2055,8 +2042,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                x_per_in = pc$x_per_in, y_per_in = pc$y_per_in,
                data_to_in_x = pc$data_to_in_x, data_to_in_y = pc$data_to_in_y,
                in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y,
-               pin = pc$pin, neutral = neutral, max_group_members = max_group_members,
-               tie_boxes = tie_boxes)
+               pin = pc$pin, neutral = neutral, max_group_members = max_group_members)
 
   .draw_axis_direction_arrows(value_label, not_value_label)
   .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
@@ -2101,105 +2087,6 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 .draw_source_box <- function(box, border_col) {
   rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = "1343",
        lwd = 1.2, xpd = NA)
-}
-
-# 2026-10-17、ユーザー確認済み：X軸(point→target KLD)の値が完全一致する
-# tieでグループ化していた最初の版は、低頻度語の大半を取りこぼしていた
-# ことが判明した -- pair_cross_table自身のdocstring通り、population
-# (分母側)はMEASURED自身が実際に現れる行ごとに計算される(scope全体で
-# 共有される定数ではない)ため、n_target/n_not_targetが同じ組み合わせ
-# でも実際に現れる行が違えばKLDはわずかに(だが非ゼロに)ズレる--図の
-# 上では同じ場所に密集して見えても、浮動小数点としては別の値になる。
-# なのでグループ化の基準をX(keyness)の完全一致から、ROWSが実際に持つ
-# n_target/n_not_target(target/neg_target側のmatch数、こちらは本当に
-# 同じ値になる)の一致に変更。X・Y両方ともその組の値の範囲(min~max)を
-# 取った外接矩形を描く(前版は常にX固定の細い縦長の箱だったが、今は同じ
-# グループ内でもXが微妙にばらつくため、Xにも幅を持たせる必要がある)。
-# MIN_GROUP_SIZE=2(2026-10-17、ユーザー確認済み：一度3に引き上げたが、
-# ちょうど2点共有している組も箱で強調したいとのことで2に戻した -- 2点
-# 以上共有している組は全て箱で囲む)。INSET_PAD_FRACで外接矩形の外側に
-# 少し余白を持たせる(点のマーカーぎりぎりに箱の辺が重ならないように)。
-# badge_selection問わず(前版はbadge_selection="zoom_box"限定だったが、
-# この分析自体はbadge選択方式と無関係なので2026-10-17に限定を外した)
-# 常に実行する。
-#
-# ROWSには実際にannotateされた点のみを渡す(d_drawn/dd--描画されている
-# 点全部--を試したところ、annotateされていない点まで箱に入るのはノイズ
-# が多すぎるとユーザーからフィードバックがあり、2026-10-17に絞った)が、
-# aggregate_locators=TRUEの時のbadge_rowsをそのまま渡してはいけない --
-# .aggregate_locator_groups()が既に同じ(n_target, n_not_target, kind)
-# キーで1行にまとめた後なので、ここでもう一度同じキーでグループ化しても
-# 各グループが必ず1行になり、箱が一つも描けない(2026-10-17ユーザー報告
-# で発覚："框完全消失了")。呼び出し元(draw_point_vs_target)は
-# aggregate_locators=FALSEでselect_badgesをもう一度呼んだ
-# tie_box_rows(「annotateされた点」ではあるが集約されていない、各点
-# 自身の実座標を保ったままの行)を渡すこと -- badge_rows自体(集約後、
-# badge表示用)は変更しない。
-#
-# .compute_x_tie_boxes()はrect()を直接描かず、{key: {x1,y1,x2,y2}}
-# (dataの座標系のまま)を返すだけ -- .draw_badges()自身の連結線も、この
-# 点のbadgeがどこかの箱に属している時は箱の辺から出発させたい
-# (2026-10-17、ユーザー確認済み：「線がもし框なら、框のedgeから出発」)
-# ので、計算結果を.draw_x_tie_boxes()(実際に描く)と.draw_badges()
-# (連結線の出発点を決める)の両方で共有できるよう、計算と描画を分離した。
-# POINT_RADIUS_IN(ROWSと同じ長さ、各点を実際に描いた時のpch記号の半径を
-# インチで)はオプション -- 渡されなければ0扱い(旧来通り、usrのごく小さい
-# 一定割合だけの余白)。渡す理由(2026-10-17ユーザー報告"放大模式下没有
-# 和node一样被扩大，导致node溢出框体")：INSET_PAD_FRACはusrの範囲に対する
-# 固定割合なので、インチ換算すると「パネル幅の一定%」という、ズーム
-# レベルに関係なく常に同じ絶対サイズになる(usrが狭くなるほど1データ単位
-# あたりのインチ数が増えるので、data単位の余白をインチに戻すと両者が
-# 打ち消し合う)。一方render_zoomed_scatter_panel側の点のcexはzoom_factor
-# (最大4倍)で別途拡大されるため、ズームパネルでは記号の実際の半径が
-# パネル幅に対して不釣り合いに大きくなり、この固定インチ幅の余白では
-# 包みきれなくなる。各グループの最大記号半径(呼び出し元がそのパネルで
-# 実際に使ったcex式と同じ式で算出し、インチのまま渡す)をデータ単位に
-# 換算して、INSET_PAD_FRAC由来の余白とのmaxを取ることで、記号がどれだけ
-# 拡大されていても箱が必ず記号を覆うようにする。
-.compute_x_tie_boxes <- function(rows, point_radius_in = NULL, inset_pad_frac = 0.01,
-                                  min_group_size = 2) {
-  if (nrow(rows) < min_group_size) return(list())
-  usr <- par("usr"); pin <- par("pin")
-  xpad <- diff(usr[1:2]) * inset_pad_frac
-  ypad <- diff(usr[3:4]) * inset_pad_frac
-  x_per_in <- diff(usr[1:2]) / pin[1]
-  y_per_in <- diff(usr[3:4]) / pin[2]
-  if (is.null(point_radius_in)) point_radius_in <- rep(0, nrow(rows))
-  key <- paste(rows$n_target, rows$n_not_target, sep = "/")
-  groups <- split(seq_len(nrow(rows)), key)
-  boxes <- list()
-  for (k in names(groups)) {
-    idx <- groups[[k]]
-    if (length(idx) < min_group_size) next
-    x_rng <- range(rows$frequency[idx])
-    y_rng <- range(rows$keyness[idx])
-    if (diff(x_rng) <= 0 && diff(y_rng) <= 0) next
-    max_radius_in <- max(point_radius_in[idx], 0)
-    pad_x <- max(xpad, max_radius_in * x_per_in)
-    pad_y <- max(ypad, max_radius_in * y_per_in)
-    boxes[[k]] <- list(x1 = x_rng[1] - pad_x, y1 = y_rng[1] - pad_y,
-                        x2 = x_rng[2] + pad_x, y2 = y_rng[2] + pad_y)
-  }
-  boxes
-}
-
-# cex(文字/記号サイズの倍率)から、その記号(pch 0:25系)がおおよそ占める
-# 半径をインチで概算する -- Rのpch記号は1文字分の高さ(par("cin")[2])を
-# 基準にcex倍されるので、直径をcex*cin[2]、半径をその半分とする近似。
-# ピクセル単位で厳密に一致させる必要はない(.compute_x_tie_boxes側は
-# これにinset_pad_fracの余白もさらに足すので、多少大きめに見積もる分には
-# 問題なく、小さすぎる方だけが実害になる)。
-.cex_to_radius_in <- function(cex) cex * par("cin")[2] * 0.5
-
-# 単純な箱のみ描く(badge=文字ラベル付きではない)、グループを選別する
-# 閾値/上限は.compute_x_tie_boxes側のMIN_GROUP_SIZE以外に設けない
-# (ユーザー確認済み)。灰色の破線(2026-10-17、赤の実線から変更、
-# ユーザー確認済み)。
-.draw_x_tie_boxes <- function(boxes, border_col = "#999999") {
-  for (box in boxes) {
-    rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = 2, lwd = 1, xpd = NA)
-  }
-  invisible(NULL)
 }
 
 # 源框(主图里，标出被放大的区域)、目标框(放大图本身的绘图区)四个角一一
@@ -2341,11 +2228,6 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   dest_ndc_x <- grconvertX(pc$usr[1:2], from = "user", to = "ndc")
   dest_ndc_y <- grconvertY(pc$usr[3:4], from = "user", to = "ndc")
 
-  tie_boxes <- .compute_x_tie_boxes(
-    tie_box_rows,
-    point_radius_in = .cex_to_radius_in(zoom_factor * .size_scale(tie_box_rows$node_size))
-  )
-  .draw_x_tie_boxes(tie_boxes)
   badge_colors <- .badge_color_from_point(badge_rows)
   .draw_badges(badge_rows, fill = badge_colors$fill, border = badge_colors$border_col,
                text_col = badge_colors$text_col, word_col = badge_colors$word_col,
@@ -2355,8 +2237,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                x_per_in = pc$x_per_in, y_per_in = pc$y_per_in,
                data_to_in_x = pc$data_to_in_x, data_to_in_y = pc$data_to_in_y,
                in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y,
-               pin = pc$pin, neutral = neutral, max_group_members = max_group_members,
-               tie_boxes = tie_boxes)
+               pin = pc$pin, neutral = neutral, max_group_members = max_group_members)
   .draw_axis_direction_arrows(value_label, not_value_label)
   list(pending = list(), dest_ndc_x = dest_ndc_x, dest_ndc_y = dest_ndc_y,
        in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y, pin = pc$pin)
@@ -2417,8 +2298,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   # 渡すとグループ内の他メンバー(色は塗られているが代表行より低い
   # dispersionを持つ点)がこの外接矩形の計算から漏れる(2026-10-19
   # ユーザー報告:"有些低dispersion的词被标红了，当时没有被框起来")。
-  # tie_box_rowsは.compute_x_tie_boxes向けに同じ理由で既に非集約のまま
-  # 渡されている(上のコメント参照) -- ここも同じ原則に揃える。
+  # tie_box_rowsは表タブ用に同じ理由で既に非集約のまま渡されている
+  # (draw_point_vs_target側のコメント参照) -- ここも同じ原則に揃える。
   zbox <- if (!is.null(zoom_box)) zoom_box else .compute_zoom_box(tie_box_rows, ranges, inset_pad_frac)
 
   # 扩大图范围里所有候选badge点(不管聚不聚合、不管是不是同一组)汇总起来
