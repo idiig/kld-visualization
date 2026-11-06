@@ -28,7 +28,7 @@ try {
   await frame.waitForFunction(() => window.Shiny?.shinyapp?.isConnected());
   console.log('Browser App ready:', frame.url());
   const choices = await frame.evaluate(() => Object.keys(document.querySelector('#input_file').selectize.options).length);
-  if (choices !== 8) throw new Error(`Expected 8 datasets, found ${choices}`);
+  if (choices !== 9) throw new Error(`Expected 9 datasets, found ${choices}`);
   await frame.evaluate(() => document.querySelector('#input_file').selectize.setValue('entry-vs-gender-kokin.tsv'));
   await frame.evaluate(() => document.querySelector('#badge_selection').selectize.setValue('frontier'));
   await frame.locator('#frontier_n').fill('3');
@@ -38,7 +38,7 @@ try {
   await image.waitFor();
   await frame.waitForFunction(() => { const img = document.querySelector('#preview img'); return img?.complete && img.naturalWidth > 10; });
   const firstSource = await image.getAttribute('src');
-  console.log('PASS: 8 datasets, parameter controls, PNG preview');
+  console.log('PASS: 9 datasets, parameter controls, PNG preview');
   const downloadEvent = page.waitForEvent('download');
   await frame.locator('#download_svg').click();
   const download = await downloadEvent;

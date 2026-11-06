@@ -239,6 +239,7 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   "entry-vs-anthology-shinkokin.tsv" = list(point_label = "entry", axis_label = "anthology", value_label = "shinkokin"),
   "entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
   "entry-vs-gender-kokin.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
+  "entry-vs-budatemajor-koi-first4.tsv" = list(point_label = "entry", axis_label = "budatemajor", value_label = "恋"),
   "pair-entry-entry-vs-anthology-shinkokin.tsv" = list(point_label = "entry", axis_label = "anthology", value_label = "shinkokin"),
   "pair-entry-entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
   "pair-entry-budatemajor-vs-gender-first4.tsv" = list(point_label = "budatemajor", axis_label = "gender", value_label = "F")
@@ -453,8 +454,8 @@ ui <- fluidPage(
                   choices = .plottable_tables(VIS_DIR),
                   selected = .DEFAULT_INPUT_FILE),
       uiOutput("unenriched_warning"),
-      selectInput("kld_variant", "kld_variant", choices = c("obs", "nofreq", "norm"),
-                  selected = "norm"),
+      selectInput("kld_variant", "kld_variant", choices = c("obs", "nofreq", "norm", "keyassoc"),
+                  selected = "keyassoc"),
       .cmd_toggle("kld_variant"),
       selectInput("frequency_type", "frequency_type", choices = c("term", "doc"),
                   selected = "term"),
@@ -576,7 +577,7 @@ ui <- fluidPage(
         textAreaInput("cmdline_text", NULL, rows = 8, width = "100%",
                       placeholder = paste(
                         "input=data/processed/visualization/entry-vs-anthology-shinkokin.tsv",
-                        "kld_variant=norm frequency_type=term badge_selection=words"
+                        "kld_variant=keyassoc frequency_type=term badge_selection=words"
                       ))
       ),
       tags$hr(),
