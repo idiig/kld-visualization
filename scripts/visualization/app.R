@@ -215,7 +215,18 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   .select_file("highlight_pairs_file", "highlight_pairs_file")
   .select_file("annotate_pairs_file", "annotate_pairs_file")
 
-  updateCheckboxInput(session, "inset", value = .bool("inset"))
+  # inset<N>_*キー(複数inset設定)が1つでもあれば、明示的なinset=trueが
+  # 無くてもinsetモード自体はON扱い——plot_point_vs_target.R側の実際の
+  # 描画ロジック(.draw_point_vs_target_args: inset = ...||!is.null(
+  # inset_configs))と同じ判定基準に揃える(2026-11-07修正: 以前はここが
+  # .bool("inset")だけを見ていたため、inset1_...等だけ貼り付けた5-inset
+  # コマンドでは「拡大表示」チェックボックス自体がFALSEのままになり、
+  # それを親に持つconditionalPanel一式[inset_n、各inset wellPanel含む]が
+  # 丸ごと非表示になっていた——UIが無反応に見えたのはここが原因で、
+  # webR固有の問題ではなかった)。
+  inset_idx_strs <- unique(sub("^inset([0-9]+)_.*$", "\\1", grep("^inset[0-9]+_", names(kv), value = TRUE)))
+  inset_idx <- as.integer(inset_idx_strs)
+  updateCheckboxInput(session, "inset", value = .bool("inset") || length(inset_idx) > 0)
   if (!is.null(.get("inset_position"))) {
     updateSelectInput(session, "inset_position", selected = .get("inset_position"))
   }
@@ -228,8 +239,6 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   # きた下標の最大値をinset_n に設定、各行のウィジェットを埋める。
   # 1個も無ければinset_nを1に戻す(貼り付けたコマンドがlegacy単inset
   # 形式だった場合、以前の複数inset入力が中途半端に残らないように)。
-  inset_idx_strs <- unique(sub("^inset([0-9]+)_.*$", "\\1", grep("^inset[0-9]+_", names(kv), value = TRUE)))
-  inset_idx <- as.integer(inset_idx_strs)
   if (length(inset_idx) > 0) {
     updateNumericInput(session, "inset_n", value = max(inset_idx))
     for (i in inset_idx) {
