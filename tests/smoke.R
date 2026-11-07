@@ -1,6 +1,6 @@
 options(kld.plot.font_family = Sys.getenv("KLD_PLOT_FONT", "Noto Serif CJK JP"))
 app <- source("app.R")$value
-stopifnot(inherits(app, "shiny.appobj"), length(.plottable_tables(VIS_DIR)) == 9,
+stopifnot(inherits(app, "shiny.appobj"), length(.plottable_tables(VIS_DIR)) == 12,
           identical(.infer_labels("entry-vs-gender-kokin.tsv")$value_label, "F"))
 base <- file.path(VIS_DIR, "entry-vs-gender-kokin.tsv")
 for (ext in c("png", "svg")) {
