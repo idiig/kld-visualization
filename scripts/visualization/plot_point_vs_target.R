@@ -2072,6 +2072,29 @@ draw_point_vs_target <- function(input, output, point_label = "point",
     annotated_table <- d_raw_cols[d_raw_cols$.row_id %in% annotated_ids, , drop = FALSE]
     annotated_table$.row_id <- NULL
     annotated_table <- .format_display_columns(annotated_table)
+    # 主图(render_inset_source_panel)画的是D本身，继承的是顶层单一
+    # cand_idx/frontier_n算出来的全局frontier着色(2026-11-07第一次修复
+    # 只改了各inset自己的d_eligible，主图这边一直没跟着变，用户反馈
+    # "主图里面没有标红五个inset的点，仍然是标全体的")——改成所有bundle
+    # 各自frontier_d_idx的并集：先把原本被全局判定染过色、但不在任何一个
+    # bundle自己命中集合里的点复原成基础渐变色，再把并集里的点统一染成
+    # frontier色，这样主图上标红的点就是"至少在某一个inset自己的filter
+    # 下进入了该inset的frontier"，跟各放大图分别展示的内容一致。
+    if (isTRUE(highlight_frontier) && !is.null(colors$frontier_match_idx)) {
+      union_idx <- unique(unlist(lapply(bundles, function(b) b$frontier_d_idx)))
+      global_idx <- which(colors$frontier_match_idx)
+      stale_idx <- global_idx[!global_idx %in% union_idx]
+      if (length(stale_idx) > 0) {
+        gp <- gradient_color_palette()
+        d$point_col[stale_idx] <- adjustcolor(
+          .linear_ramp(colors$dispersion[stale_idx], colors$signed_range, gp["lo"], gp["hi"]),
+          alpha.f = 0.85)
+      }
+      if (length(union_idx) > 0) {
+        d$point_col[union_idx] <- .abs_ramp(colors$dispersion[union_idx], colors$abs_range,
+                                             colors$frontier_pal["light"], colors$frontier_pal["dark"])
+      }
+    }
     .render_with_insets(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
                          axis_label, point_label, value_label, not_value_label,
                          default_label, badge_selection, badge_layout,
@@ -2473,7 +2496,12 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     # 代价是如果同时还用了highlight/highlight_pairs，被复原的那些点会
     # 连带丢失原本的highlight着色(两者叠加的边界情况，目前没有调用方
     # 同时用到三者，未处理)。colors为NULL(非highlight_frontier调用)时
-    # 整段跳过，行为跟改动前一致。
+    # 整段跳过，行为跟改动前一致。frontier_d_idx(本config自己的frontier
+    # 命中、以D自身下标表示)额外带出去——主图(render_inset_source_panel)
+    # 画的是D本身而不是任何一个d_eligible，所以"主图里哪些点该标成
+    # frontier"要靠调用方(draw_point_vs_target)把所有bundle的
+    # frontier_d_idx取并集、回头改D$point_col，这里只负责算出这份下标。
+    frontier_d_idx <- integer(0)
     if (isTRUE(highlight_frontier) && !is.null(colors) && !is.null(colors$frontier_match_idx)) {
       was_global_frontier <- colors$frontier_match_idx[cand_idx]
       if (any(was_global_frontier)) {
@@ -2488,6 +2516,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
       local_match_in_eligible <- local_match[cand_idx]
       if (any(local_match_in_eligible)) {
         local_idx <- cand_idx[local_match_in_eligible]
+        frontier_d_idx <- local_idx
         d_eligible$point_col[local_match_in_eligible] <- .abs_ramp(
           colors$dispersion[local_idx], colors$abs_range,
           colors$frontier_pal["light"], colors$frontier_pal["dark"])
@@ -2504,7 +2533,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     zbox <- .compute_zoom_box(tie_box_rows, ranges, inset_pad_frac)
     list(label = cfg$label, inset_position = cfg$inset_position, frontier_n = cfg$frontier_n,
          desc = .inset_filter_desc(cfg$filters), d_eligible = d_eligible,
-         badge_rows = badge_rows, tie_box_rows = tie_box_rows, zbox = zbox)
+         badge_rows = badge_rows, tie_box_rows = tie_box_rows, zbox = zbox,
+         frontier_d_idx = frontier_d_idx)
   })
 }
 
