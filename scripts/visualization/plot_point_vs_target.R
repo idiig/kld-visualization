@@ -335,7 +335,7 @@ filter_by_node_frequency <- function(d, threshold, op = "gte") {
 }
 
 .draw_axes <- function(d, ranges, nofreq, axis_label, point_label, x_break = NULL, y_break = NULL,
-                        axis_col = "black", kld_variant = NULL) {
+                        axis_col = "black", kld_variant = NULL, label_lang = "ja") {
   xr <- ranges$xr; yr <- ranges$yr
   plot.new()
   plot.window(xlim = c(xr[1] - ranges$xpad, xr[2] + ranges$xpad),
@@ -369,7 +369,8 @@ filter_by_node_frequency <- function(d, threshold, op = "gte") {
       axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
     }
     title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
-          ylab = bquote(plain(dispersion) * "(" * .(point_label) * ")"), line = title_line)
+          ylab = bquote(plain(.(.ui_label("dispersion", label_lang))) * "(" * .(point_label) * ")"),
+          line = title_line)
     usr <- par("usr")
     if (!is.null(x_break)) .draw_axis_break_mark(x_break$main_frac, side = 1, usr = usr)
     if (!is.null(y_break)) .draw_axis_break_mark(y_break$main_frac, side = 2, usr = usr)
@@ -387,7 +388,7 @@ filter_by_node_frequency <- function(d, threshold, op = "gte") {
     axis(1, at = pretty(xr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
     axis(2, at = pretty(yr), col = axis_col, col.axis = axis_col, col.ticks = axis_col)
     title(xlab = bquote(plain(KLD)[.(kld_sub)] * "(" * .(point_label) * "→" * .(axis_label) * ")"),
-          ylab = bquote(plain(frequency) * "(" * .(point_label) * ")"),
+          ylab = bquote(plain(.(.ui_label("frequency", label_lang))) * "(" * .(point_label) * ")"),
           line = title_line)
   }
   # neutral(理论中性点)如果落在被断轴压缩的那根轴上，要用同一个fwd()换算
@@ -568,10 +569,17 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
   # 浅灰)，整条灰阶的可见反差被压缩到很窄的区间——蓝/黄这种有色相的
   # 配色在同样的alpha下还能凭色相认出来，纯灰阶就不行。这里单独把
   # alpha调高，让灰阶本身的深浅在未叠加时也能看出来(2026-10-17用户反馈
-  # "完全不是渐变色，是一块黑一块灰色")。
+  # "完全不是渐变色，是一块黑一块灰色")。但这只在没有任何选中机制
+  # (has_categories==FALSE，纯dispersion渐变、没有highlight/highlight_
+  # pairs/highlight_frontier)时适用——一旦存在某种"选中"概念，未被选中的
+  # 点应该明显比被选中的点更淡，才能让选中的点"跳出来"(2026-10-19之前
+  # 一直是0.85，跟被选中的点几乎同样显眼；2026-11-07用户要求"不被选择的
+  # 点改成透明度0.2")。被选中的点(下面is_match覆盖的.abs_ramp结果)没有
+  # 套adjustcolor、保持完全不透明，两者对比由此拉开。
+  base_alpha <- if (has_categories) 0.2 else 0.85
   point_col <- adjustcolor(.linear_ramp(dispersion, signed_range, gradient_palette["lo"],
                                          gradient_palette["hi"]),
-                            alpha.f = 0.85)
+                            alpha.f = base_alpha)
   # 图例那条竖条也要用同一套线性映射才能跟正文点的颜色对应得上——这里
   # 直接把60个色块的颜色算好随返回值一起带出去，.draw_legend自己不用再
   # 认识.linear_ramp这些细节，只管拿着一串现成颜色画矩形(跟.draw_legend
@@ -1491,11 +1499,32 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 
 # ---- 图例 ----
 
+# legend/轴标题里少数几个"UI本身的用词"(不是point_label/axis_label/
+# value_label这些调用方自带的自由文本)，2026-11-07新增可选日语/英语切换
+# (label_lang="ja"默认/"en")。只覆盖用户明确要求的那几处(y轴标题里的
+# frequency/dispersion、.draw_legend的渐变条标题、.draw_size_legend的
+# 大小图例标题、highlight_frontier自己的图例类别名)，不碰confident/
+# inconfident(Y轴方向箭头端点文字，2026-11-05用户已经定死成固定英文
+# 措辞的那两个，见.draw_axis_direction_arrows自己的注释)或
+# FILTER_DESC_LABEL(inset框上方的filter说明文字，没人要求联动)。
+.UI_LABELS <- list(
+  ja = c(frequency = "頻度", dispersion = "分散度", dispersion_range = "分散度差",
+         frontier = "対象"),
+  en = c(frequency = "frequency", dispersion = "dispersion", dispersion_range = "dispersion range",
+         frontier = "target")
+)
+.ui_label <- function(key, label_lang = "ja") {
+  tbl <- .UI_LABELS[[label_lang]]
+  if (is.null(tbl)) tbl <- .UI_LABELS[["ja"]]
+  unname(tbl[key])
+}
+
 # 每个type一条竖排dispersion渐变+两端数值(2026-09-13新增)，默认(未命中
 # highlight表)桶固定排最前面用default_label当名字(可以是point_label，也
 # 可以是"その他"这种更贴切的说法)，之后按highlight表里type出现顺序追加。
 .draw_legend <- function(type_ramps, signed_range, legend_cols, default_label, pin,
-                          in_to_data_x, in_to_data_y, default_palette = default_color_palette()) {
+                          in_to_data_x, in_to_data_y, default_palette = default_color_palette(),
+                          label_lang = "ja") {
   legend_w_in <- 0.11
   legend_h_in <- 0.7
   # bar靠右(右边缘固定在离画布右边缘0.05in处，跟下面type标签同一个右对齐
@@ -1526,7 +1555,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
        border = "#888888", xpd = NA)
   legend_cex <- 0.5
   text(in_to_data_x(legend_x2_in), in_to_data_y(legend_y1_in + legend_h_in),
-       "分散度差", cex = legend_cex, adj = c(1, -0.6), xpd = NA)
+       .ui_label("dispersion_range", label_lang), cex = legend_cex, adj = c(1, -0.6), xpd = NA)
   text(in_to_data_x(legend_x1_in - 0.03), in_to_data_y(legend_y1_in + legend_h_in),
        format(signed_range[2], digits = 3), cex = legend_cex, adj = c(1, 1), xpd = NA)
   text(in_to_data_x(legend_x1_in - 0.03), in_to_data_y(legend_y1_in),
@@ -1553,6 +1582,12 @@ filter_to_annotated_points <- function(rows, badge_rows) {
     pal <- all_labels[[i]]
     swatch_col <- colorRampPalette(c(pal["light"], pal["dark"]))(2)[2]
     label <- names(all_labels)[i]
+    # type_ramps里的"frontier"桶(见.compute_point_colors)是内部key，不是
+    # 面向用户的展示文字(之前直接显示英文单词"frontier"，2026-11-07用户
+    # 要求改成"对象")——其余type名字(highlight/highlight_pairs表里的type
+    # 列、或default_label)本来就是调用方自己给的、已经是人话，不经过这层
+    # 翻译。
+    if (identical(label, "frontier")) label <- .ui_label("frontier", label_lang)
     text(in_to_data_x(label_right_in), in_to_data_y(y_in + swatch_size_in / 2),
          label, cex = legend_cex, adj = c(1, 0.5), xpd = NA)
     label_w_in <- strwidth(label, cex = legend_cex, units = "inches")
@@ -1577,17 +1612,31 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 # 自身の値を読む(2026-10-17確認済みの「表生成時に1回だけ計算、Rで再計算
 # しない」という原則は変わらず、dispersion自体もtsv生成時に書き込まれた
 # 列のまま)。
-.draw_size_legend <- function(size_value, pin, in_to_data_x, in_to_data_y, pch = 1) {
+.draw_size_legend <- function(size_value, pin, in_to_data_x, in_to_data_y, pch = 1,
+                               label_lang = "ja") {
   legend_cex <- 0.5
   x_in <- pin[1] - 0.15
-  target_values <- c(min(size_value), median(size_value), max(size_value))
+  # min(size_value)/median(size_value)这两个代表值经常真的相等(不只是看起来
+  # 接近)——比如dispersion列本身有一大半行恰好是1.0时，median和max都是1.0，
+  # 算出来的两个示例点cex完全一样(2026-11-07用户反馈"分散度的3个示例第2和
+  # 第3个一样大")。改成从去重后的唯一值里按秩取中间值：只要唯一值≥3个，
+  # 这个中间值必然严格小于max、大于min，三个示例点保证互不相同；唯一值
+  # 不够3个时就只画实际存在的那几个(没有第三种真实大小可画，硬凑三个只会
+  # 出现重复)。
+  unique_vals <- sort(unique(size_value))
+  target_values <- if (length(unique_vals) >= 3) {
+    c(unique_vals[1], unique_vals[ceiling(length(unique_vals) / 2)],
+      unique_vals[length(unique_vals)])
+  } else {
+    unique_vals
+  }
   closest_idx <- vapply(target_values, function(v) which.min(abs(size_value - v)), integer(1))
   sizes <- size_value[closest_idx]
   labels <- sprintf("%.3f", sizes)
   gap_in <- 0.16
   y_top_in <- pin[2] - 0.22
   text(in_to_data_x(pin[1] - 0.05), in_to_data_y(pin[2] - 0.06),
-       "分散", cex = legend_cex, adj = c(1, 0), xpd = NA)
+       .ui_label("dispersion", label_lang), cex = legend_cex, adj = c(1, 0), xpd = NA)
   for (i in seq_along(labels)) {
     y_in <- y_top_in - (i - 1) * gap_in
     points(in_to_data_x(x_in), in_to_data_y(y_in), pch = pch,
@@ -1932,7 +1981,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   annotate_pairs = NULL,
                                   annotate_pairs_file = NULL,
                                   kld_variant = NULL,
-                                  frequency_type = NULL) {
+                                  frequency_type = NULL,
+                                  label_lang = "ja") {
   # badge_layout="network"splices graphviz output in as svg XML text
   # (.splice_network_glyphs below) -- that only makes sense for a real
   # vector output, never png. Rather than make the caller get this
@@ -2085,10 +2135,14 @@ draw_point_vs_target <- function(input, output, point_label = "point",
       global_idx <- which(colors$frontier_match_idx)
       stale_idx <- global_idx[!global_idx %in% union_idx]
       if (length(stale_idx) > 0) {
+        # 复原回"未被选中"的基础渐变色——这里跑得到的分支是highlight_
+        # frontier==TRUE(has_categories必为TRUE)，所以跟.compute_point_
+        # colors里base_alpha的选择保持一致，用0.2而不是0.85(2026-11-07
+        # 用户要求"不被选择的点改成透明度0.2")。
         gp <- gradient_color_palette()
         d$point_col[stale_idx] <- adjustcolor(
           .linear_ramp(colors$dispersion[stale_idx], colors$signed_range, gp["lo"], gp["hi"]),
-          alpha.f = 0.85)
+          alpha.f = 0.2)
       }
       if (length(union_idx) > 0) {
         d$point_col[union_idx] <- .abs_ramp(colors$dispersion[union_idx], colors$abs_range,
@@ -2104,7 +2158,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                          network_node_gap = network_node_gap,
                          zoom_annotated_only = zoom_annotated_only,
                          repel_annotated_only = repel_annotated_only,
-                         kld_variant = kld_variant)
+                         kld_variant = kld_variant, label_lang = label_lang)
     cat(output, ":", nrow(d), point_label, "points\n")
     return(invisible(annotated_table))
   }
@@ -2140,7 +2194,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   .open_canvas(output, canvas_size)
   on.exit(dev.off())
   .draw_axes(d, ranges, nofreq, axis_label, point_label, breaks$x_break, breaks$y_break,
-             kld_variant = kld_variant)
+             kld_variant = kld_variant, label_lang = label_lang)
 
   # d_drawn只影响画哪些点/badge布局要避开哪些点，图例(.draw_size_legend/
   # .draw_shape_legend)仍然用完整的d——图例描述的是整份数据的编码规则，
@@ -2169,10 +2223,10 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 
   .draw_axis_direction_arrows(value_label, not_value_label)
   .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
-                     pch = .representative_pch(d$point_pch))
+                     pch = .representative_pch(d$point_pch), label_lang = label_lang)
   .draw_shape_legend(d, pc$pin, pc$in_to_data_x, pc$in_to_data_y)
   .draw_legend(colors$type_ramps, colors$signed_range, colors$legend_cols, default_label, pc$pin,
-               pc$in_to_data_x, pc$in_to_data_y, colors$default_palette)
+               pc$in_to_data_x, pc$in_to_data_y, colors$default_palette, label_lang = label_lang)
 
   cat(output, ":", nrow(d), point_label, "points\n")
   invisible(annotated_table)
@@ -2258,9 +2312,9 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label, breaks,
                                        zboxes, inset_border_col, value_label, not_value_label,
                                        colors, default_label, kld_variant = NULL,
-                                       box_labels, box_ltys) {
+                                       box_labels, box_ltys, label_lang = "ja") {
   .draw_axes(d, ranges, nofreq, axis_label, point_label, breaks$x_break, breaks$y_break,
-             kld_variant = kld_variant)
+             kld_variant = kld_variant, label_lang = label_lang)
   points(d$frequency, d$keyness, pch = d$point_pch,
          cex = .size_scale(d$node_size), col = d$point_col)
   # 必须趁现在(还没切换par(fig=)去画其它面板之前)算好NDC，晚了的话其它
@@ -2275,10 +2329,10 @@ render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label
   pc <- panel_coord_converters()
   .draw_axis_direction_arrows(value_label, not_value_label)
   .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
-                     pch = .representative_pch(d$point_pch))
+                     pch = .representative_pch(d$point_pch), label_lang = label_lang)
   .draw_shape_legend(d, pc$pin, pc$in_to_data_x, pc$in_to_data_y)
   .draw_legend(colors$type_ramps, colors$signed_range, colors$legend_cols, default_label, pc$pin,
-               pc$in_to_data_x, pc$in_to_data_y, colors$default_palette)
+               pc$in_to_data_x, pc$in_to_data_y, colors$default_palette, label_lang = label_lang)
   list(src_ndc_x = src_ndc_x, src_ndc_y = src_ndc_y)
 }
 
@@ -2315,8 +2369,16 @@ render_network_glyph_panel <- function(badge_rows, inset_border_col, value_label
   max_strength <- max(strength, na.rm = TRUE)
   widths <- if (is.finite(max_strength) && max_strength > 0) pmax(0.8, 4 * strength/max_strength) else rep(0.8, length(strength))
   igraph::plot.igraph(graph, layout = layout,
+      # vertex.label.degree=pi/2 + vertex.label.dist>0 moves the label off
+      # the node (below it, screen-space, verified empirically -- igraph's
+      # own docs are ambiguous about sign) instead of centered on top of
+      # it -- centered labels were illegible on the square (non-"entry")
+      # nodes, where the label text routinely overflowed the node's own
+      # fill and collided with incident edges (2026-11-07 user feedback
+      # "network里的字不是很清晰").
       vertex.label = nodes, vertex.label.family = getOption("kld.plot.font_family", "sans"),
       vertex.label.cex = 0.7, vertex.label.color = node_colors,
+      vertex.label.degree = pi / 2, vertex.label.dist = 1.6,
       vertex.color = "white", vertex.frame.color = node_colors, vertex.shape = shapes,
       vertex.size = (8 + 4 * network_scale) / max(0.2, network_node_gap),
       edge.color = c(c1, c2), edge.width = widths, edge.arrow.size = 0.25,
@@ -2336,11 +2398,11 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                          inset_border_col, badge_selection, badge_layout,
                                          value_label, not_value_label, neutral, max_group_members,
                                          zoom_annotated_only = FALSE, repel_annotated_only = FALSE,
-                                         kld_variant = NULL) {
+                                         kld_variant = NULL, label_lang = "ja") {
   box_ranges <- list(xr = c(zbox$x1, zbox$x2), yr = c(zbox$y1, zbox$y2),
                       xpad = 0, ypad = 0, neutral = ranges$neutral)
   .draw_axes(d, box_ranges, nofreq, axis_label, point_label, NULL, NULL, axis_col = inset_border_col,
-             kld_variant = kld_variant)
+             kld_variant = kld_variant, label_lang = label_lang)
   dd <- d[d$frequency >= zbox$x1 & d$frequency <= zbox$x2 &
             d$keyness >= zbox$y1 & d$keyness <= zbox$y2, ]
   if (should_hide_unannotated_in_zoom(zoom_annotated_only) ||
@@ -2507,9 +2569,12 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
       if (any(was_global_frontier)) {
         reset_idx <- cand_idx[was_global_frontier]
         gp <- gradient_color_palette()
+        # 同.compute_point_colors的base_alpha选择：highlight_frontier==TRUE
+        # 分支下has_categories必为TRUE，复原成的"未被选中"基础色要用0.2
+        # (2026-11-07)，不是旧的0.85。
         base_col <- adjustcolor(
           .linear_ramp(colors$dispersion[reset_idx], colors$signed_range, gp["lo"], gp["hi"]),
-          alpha.f = 0.85)
+          alpha.f = 0.2)
         d_eligible$point_col[was_global_frontier] <- base_col
       }
       local_match <- .frontier_match_idx(d, cfg$frontier_n, cand_idx, annotate_point_exclude)
@@ -2585,7 +2650,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                  max_group_members = 50, network_scale = 0.01,
                                  network_node_gap = 1,
                                  zoom_annotated_only = FALSE, repel_annotated_only = FALSE,
-                                 kld_variant = NULL) {
+                                 kld_variant = NULL, label_lang = "ja") {
   multi <- length(bundles) > 1
   single_locator_flags <- vapply(bundles, function(b) .is_single_locator(b$badge_rows), logical(1))
 
@@ -2609,7 +2674,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
   source_panel <- render_inset_source_panel(d, ranges, nofreq, axis_label, point_label, breaks,
                                              zboxes, inset_border_col, value_label, not_value_label,
                                              colors, default_label, kld_variant = kld_variant,
-                                             box_labels = box_labels, box_ltys = box_ltys)
+                                             box_labels = box_labels, box_ltys = box_ltys,
+                                             label_lang = label_lang)
 
   all_pending <- list()
   all_marks_in <- NULL
@@ -2634,7 +2700,7 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                    value_label, not_value_label, neutral, max_group_members,
                                    zoom_annotated_only = zoom_annotated_only,
                                    repel_annotated_only = repel_annotated_only,
-                                   kld_variant = kld_variant)
+                                   kld_variant = kld_variant, label_lang = label_lang)
     }
     if (multi) {
       .draw_inset_header(b$label, b$desc, inset_border_col)
@@ -2784,7 +2850,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     network_node_gap = as.numeric(.arg("network_node_gap", "1")),
     point_field = .arg("point_field", "entry"),
     kld_variant = .arg("kld_variant"),
-    frequency_type = .arg("frequency_type")
+    frequency_type = .arg("frequency_type"),
+    label_lang = .arg("label_lang", "ja")
   )
 }
 
