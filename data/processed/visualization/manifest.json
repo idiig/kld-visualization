@@ -1,4 +1,28 @@
 {
+  "budatemajor-vs-gender-first4.tsv": {
+    "asset": "budatemajor-vs-gender-first4.rds",
+    "rows": 18,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "n_target", "n_not_target", "total_freq", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "1e907df6a9874b5731e7966f32050f33"
+  },
+  "concept-mostnarrow-vs-anthology-shinkokin.tsv": {
+    "asset": "concept-mostnarrow-vs-anthology-shinkokin.rds",
+    "rows": 5208,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "29ec247935c7019dbdc2271ef26e38e6"
+  },
+  "concept-mostnarrow-vs-gender-first4.tsv": {
+    "asset": "concept-mostnarrow-vs-gender-first4.rds",
+    "rows": 4824,
+    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "field1": {},
+    "field2": {},
+    "source_md5": "b1c54d5e7759dea6d6d5a6d9b3c9a720"
+  },
   "entry-vs-anthology-shinkokin.tsv": {
     "asset": "entry-vs-anthology-shinkokin.rds",
     "rows": 32768,

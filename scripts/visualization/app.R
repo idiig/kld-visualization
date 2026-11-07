@@ -270,6 +270,9 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   "entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
   "entry-vs-gender-kokin.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
   "entry-vs-budatemajor-koi-first4.tsv" = list(point_label = "entry", axis_label = "budatemajor", value_label = "恋"),
+  "budatemajor-vs-gender-first4.tsv" = list(point_label = "budatemajor", axis_label = "gender", value_label = "F"),
+  "concept-mostnarrow-vs-gender-first4.tsv" = list(point_label = "concept", axis_label = "gender", value_label = "F"),
+  "concept-mostnarrow-vs-anthology-shinkokin.tsv" = list(point_label = "concept", axis_label = "anthology", value_label = "shinkokin"),
   "pair-entry-entry-vs-anthology-shinkokin.tsv" = list(point_label = "entry", axis_label = "anthology", value_label = "shinkokin"),
   "pair-entry-entry-vs-gender-first4.tsv" = list(point_label = "entry", axis_label = "gender", value_label = "F"),
   "pair-entry-budatemajor-vs-gender-first4.tsv" = list(point_label = "budatemajor", axis_label = "gender", value_label = "F")
