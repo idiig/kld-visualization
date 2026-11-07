@@ -2490,10 +2490,15 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 # BUNDLES是.resolve_inset_bundles()产出的list，长度>=1；长度1时就是原来
 # 单inset的legacy路径(bundles[[1]]$label==""，不画字母/filter说明以外的
 # 任何额外元素，投影虚线正常画)。长度>1时：每个bundle在主图上有自己的
-# 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)，任一bundle
-# 退化成single_locator(网络图面板)直接stop()——igraph渲染路径本身对多个
-# 网络图面板没有main-repo那种SVG校准标记限制，但为了跟main-repo的行为
-# 保持一致、避免用户在两个仓库之间得到不同的报错/成功结果，这里同样拒绝。
+# 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)。任一个或多个
+# bundle退化成single_locator(网络图面板)不再stop()(2026-11-07第二次确认
+# 解除)——render_network_glyph_panel本身用igraph::plot.igraph()直接画
+# 在当前par(fig=...)区域里，跟render_zoomed_scatter_panel同一种"画进
+# 当前面板"机制，不像main repo那样要靠全局共享的SVG校准标记做事后拼接，
+# 所以这里原本的限制只是"为了跟main repo行为一致"而加的人为限制，不是
+# 这条代码路径本身做不到。第一次解除后曾因"从未在webR下验证过多次调用
+# igraph布局算法是否安全"而撤回，这次按用户要求（已在浏览器里确认单个
+# 网络面板能正常画）重新解除，继续跟踪部署后的真实表现。
 .render_with_insets <- function(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
                                  axis_label, point_label, value_label, not_value_label,
                                  default_label, badge_selection, badge_layout,
@@ -2504,12 +2509,6 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                  kld_variant = NULL) {
   multi <- length(bundles) > 1
   single_locator_flags <- vapply(bundles, function(b) .is_single_locator(b$badge_rows), logical(1))
-  if (multi && any(single_locator_flags)) {
-    bad_labels <- vapply(bundles[single_locator_flags], `[[`, "", "label")
-    stop("多个inset同时渲染时，不支持某个config的候选点全部落在同一个locator、",
-         "退化成网络图(字母: ", paste(bad_labels, collapse = ", "),
-         ")——请调整该config的filter/frontier_n，或改成只渲染一个inset")
-  }
 
   positions <- vapply(bundles, `[[`, "", "inset_position")
   lay <- .inset_grid_layout(positions)
