@@ -646,6 +646,8 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
   # frequency_threshold把候选池筛小之后，中点以上的点数会跟着缩水、
   # 凑不够frontier_n个)，直接跟.select_badge_rows的frontier分支同一个
   # "排序后截断前N个"算法，保证只要d里有足够多的点就一定凑够frontier_n。
+  frontier_match_idx <- NULL
+  frontier_pal <- NULL
   if (isTRUE(highlight_frontier)) {
     # frontier_candidate_idx(新增，2026-11-07)：排前N的候选池从"全部d"
     # 收窄到这份下标——跟badge用的cand_idx(非edge的4种filter只选不删后
@@ -654,23 +656,38 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
     # filter只选不删管线下，d本身不再被这4种filter裁剪，必须显式传候选池
     # 下标才能让着色跟badge选中同一批点)。NULL时等价于全量d，跟改动前
     # 完全一致。
-    pool_idx <- if (is.null(frontier_candidate_idx)) seq_len(nrow(d)) else frontier_candidate_idx
-    ord <- pool_idx[order(-d$frequency[pool_idx])]
-    top_n <- min(frontier_n, length(ord))
-    top_idx <- ord[seq_len(top_n)]
-    is_match <- seq_len(nrow(d)) %in% top_idx
-    if (!is.null(annotate_point_exclude)) {
-      is_match <- is_match & !(d$point %in% annotate_point_exclude)
-    }
+    frontier_match_idx <- .frontier_match_idx(d, frontier_n, frontier_candidate_idx,
+                                               annotate_point_exclude)
     base_idx <- length(type_ramps)
-    pal <- category_palettes[[(base_idx %% length(category_palettes)) + 1]]
-    if (any(is_match)) {
-      point_col[is_match] <- .abs_ramp(dispersion[is_match], abs_range, pal["light"], pal["dark"])
+    frontier_pal <- category_palettes[[(base_idx %% length(category_palettes)) + 1]]
+    if (any(frontier_match_idx)) {
+      point_col[frontier_match_idx] <- .abs_ramp(dispersion[frontier_match_idx], abs_range,
+                                                  frontier_pal["light"], frontier_pal["dark"])
     }
-    type_ramps[["frontier"]] <- pal
+    type_ramps[["frontier"]] <- frontier_pal
   }
   list(point_col = point_col, signed_range = signed_range, legend_cols = legend_cols,
-       type_ramps = type_ramps, default_palette = default_palette)
+       type_ramps = type_ramps, default_palette = default_palette,
+       dispersion = dispersion, abs_range = abs_range,
+       frontier_match_idx = frontier_match_idx, frontier_pal = frontier_pal)
+}
+
+# frontier色付け/frontierバッジ選定どちらにも使う"POOL_IDX（NULLなら全D）
+# のうち、d$frequency降順でFRONTIER_N件"という判定を1箇所に集約——
+# .compute_point_colors(着色用)と.resolve_inset_bundles(2026-11-07以降、
+# インセットごとに同じ判定を自分のcand_idx上でやり直すため)の両方から
+# 同じロジックを呼ぶ。返り値はnrow(d)長のlogical(どのdでも同じ行数を
+# 前提にできるのは呼び出し側が常にPOOL_IDXを同じdへの添字として渡すため)。
+.frontier_match_idx <- function(d, frontier_n, pool_idx, annotate_point_exclude) {
+  pool_idx <- if (is.null(pool_idx)) seq_len(nrow(d)) else pool_idx
+  ord <- pool_idx[order(-d$frequency[pool_idx])]
+  top_n <- min(frontier_n, length(ord))
+  top_idx <- ord[seq_len(top_n)]
+  is_match <- seq_len(nrow(d)) %in% top_idx
+  if (!is.null(annotate_point_exclude)) {
+    is_match <- is_match & !(d$point %in% annotate_point_exclude)
+  }
+  is_match
 }
 
 # ---- badge候选筛选 ----
@@ -2045,7 +2062,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
     bundles <- .resolve_inset_bundles(d, configs, ranges, inset_pad_frac,
                                        annotate_words, label_top_n, neutral,
                                        annotate_nontarget_only, annotate_point_exclude,
-                                       badge_selection, aggregate_locators, annotate_pairs)
+                                       badge_selection, aggregate_locators, annotate_pairs,
+                                       highlight_frontier = highlight_frontier, colors = colors)
     # The table-tab's "currently annotated points" output -- union of every
     # bundle's tie_box_rows (multi-config: a point annotated by ANY inset
     # counts), joined back to the pre-overwrite snapshot (see .row_id's own
@@ -2436,7 +2454,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 .resolve_inset_bundles <- function(d, configs, ranges, inset_pad_frac,
                                     annotate_words, label_top_n, neutral,
                                     annotate_nontarget_only, annotate_point_exclude,
-                                    badge_selection, aggregate_locators, annotate_pairs) {
+                                    badge_selection, aggregate_locators, annotate_pairs,
+                                    highlight_frontier = FALSE, colors = NULL) {
   lapply(configs, function(cfg) {
     cand_idx <- .selection_filter_idx(d, cfg$filters)
     if (length(cand_idx) == 0) {
@@ -2444,6 +2463,36 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                     if (nzchar(cfg$label)) paste0(" ", cfg$label) else ""))
     }
     d_eligible <- d[cand_idx, ]
+    # highlight_frontier(2026-11-07，本函数内): d$point_col继承自顶层
+    # colors(用顶层cand_idx/frontier_n算出来的全局frontier着色)，但每个
+    # inset自己的cand_idx(cfg$filters，尤其各自的edge_threshold)通常
+    # 跟顶层不同——继承来的着色因此可能"染错了点"(全局frontier里的点
+    # 不在这个inset自己的候选池前frontier_n名里，或反过来)。这里按这个
+    # config自己的候选池+自己的frontier_n重新判定一次：先把这批行里
+    # 被全局判定染过色的点复原成基础渐变色，再按本地判定重新着色——
+    # 代价是如果同时还用了highlight/highlight_pairs，被复原的那些点会
+    # 连带丢失原本的highlight着色(两者叠加的边界情况，目前没有调用方
+    # 同时用到三者，未处理)。colors为NULL(非highlight_frontier调用)时
+    # 整段跳过，行为跟改动前一致。
+    if (isTRUE(highlight_frontier) && !is.null(colors) && !is.null(colors$frontier_match_idx)) {
+      was_global_frontier <- colors$frontier_match_idx[cand_idx]
+      if (any(was_global_frontier)) {
+        reset_idx <- cand_idx[was_global_frontier]
+        gp <- gradient_color_palette()
+        base_col <- adjustcolor(
+          .linear_ramp(colors$dispersion[reset_idx], colors$signed_range, gp["lo"], gp["hi"]),
+          alpha.f = 0.85)
+        d_eligible$point_col[was_global_frontier] <- base_col
+      }
+      local_match <- .frontier_match_idx(d, cfg$frontier_n, cand_idx, annotate_point_exclude)
+      local_match_in_eligible <- local_match[cand_idx]
+      if (any(local_match_in_eligible)) {
+        local_idx <- cand_idx[local_match_in_eligible]
+        d_eligible$point_col[local_match_in_eligible] <- .abs_ramp(
+          colors$dispersion[local_idx], colors$abs_range,
+          colors$frontier_pal["light"], colors$frontier_pal["dark"])
+      }
+    }
     badge_rows <- select_badges(d_eligible, annotate_words, label_top_n, neutral,
                                  annotate_nontarget_only, annotate_point_exclude,
                                  badge_selection, cfg$frontier_n, aggregate_locators,
