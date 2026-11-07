@@ -201,7 +201,7 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   updateCheckboxInput(session, "aggregate_locators", value = .bool("aggregate_locators", TRUE))
 
   for (id in c("edge_threshold", "dispersion_threshold", "node_dispersion_threshold",
-               "frequency_threshold", "node_frequency_threshold")) {
+               "frequency_threshold", "node_frequency_threshold", "node_keyness_threshold")) {
     .sync_filter(id)
   }
   frontier_n <- .num("frontier_n")
@@ -250,7 +250,8 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
       if (!is.null(pos)) updateSelectInput(session, .id("inset_position"), selected = pos)
       fn <- .num(.id("frontier_n"))
       if (!is.na(fn)) updateNumericInput(session, .id("frontier_n"), value = fn)
-      for (type in c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")) {
+      for (type in c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency",
+                     "node_keyness")) {
         tid <- .id(paste0(type, "_threshold"))
         v <- .num(tid)
         if (!is.na(v)) {
@@ -447,7 +448,8 @@ if (is.null(.INITIAL_LABELS)) {
 # 定数から生成——顶层(以下のALL_PARAM_KEYS)と複数inset設定の各行
 # (.INSET_CONFIG_SUBKEYS)で同じ命名規則を共有し、どちらかだけ直しても
 # 片方が追従し忘れることを防ぐ。
-.THRESHOLD_TYPES <- c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")
+.THRESHOLD_TYPES <- c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency",
+                      "node_keyness")
 .threshold_key_pairs <- function() {
   as.vector(rbind(paste0(.THRESHOLD_TYPES, "_threshold"), paste0(.THRESHOLD_TYPES, "_threshold_op")))
 }
@@ -596,6 +598,14 @@ ui <- fluidPage(
       .filter_control("frequency_threshold", "frequency_threshold (total_freq)"),
       .filter_control("node_frequency_threshold", "node_frequency_threshold (pair片側freq1/freq2)",
                       pair_only = TRUE),
+      # draft.org:1211-1212「それぞれの語の女性歌への連関が0.8以下のものに
+      # 限定する」(2026-11-07) -- pair片側(w1/w2)それぞれの単語単位keyness
+      # の絶対値をみるfilter。node_dispersion/node_frequencyと同じ「pair
+      # 片側」系列だが、値そのものが符号付きKLDなので内部ではabs()を取って
+      # から比較する(plot_point_vs_target.R側の.SELECTION_FILTER_ABS)。
+      .filter_control("node_keyness_threshold",
+                      "node_keyness_threshold (pair片側語自身のKLD、絶対値)",
+                      pair_only = TRUE),
       conditionalPanel(
         condition = "input.badge_selection == 'frontier'",
         numericInput("frontier_n", "frontier_n (badge_selection=\"frontier\"時)", value = 15,
@@ -694,7 +704,8 @@ ui <- fluidPage(
                 .inset_config_filter_control(sprintf("inset%d_dispersion_threshold", i), "dispersion_threshold"),
                 .inset_config_filter_control(sprintf("inset%d_node_dispersion_threshold", i), "node_dispersion_threshold"),
                 .inset_config_filter_control(sprintf("inset%d_frequency_threshold", i), "frequency_threshold"),
-                .inset_config_filter_control(sprintf("inset%d_node_frequency_threshold", i), "node_frequency_threshold")
+                .inset_config_filter_control(sprintf("inset%d_node_frequency_threshold", i), "node_frequency_threshold"),
+                .inset_config_filter_control(sprintf("inset%d_node_keyness_threshold", i), "node_keyness_threshold")
               )
             )
           })
@@ -863,6 +874,8 @@ server <- function(input, output, session) {
     frequency_threshold_op <- .resolve_threshold_op_input(input, "frequency_threshold")
     node_frequency_threshold <- .resolve_threshold(input, "node_frequency_threshold")
     node_frequency_threshold_op <- .resolve_threshold_op_input(input, "node_frequency_threshold")
+    node_keyness_threshold <- .resolve_threshold(input, "node_keyness_threshold")
+    node_keyness_threshold_op <- .resolve_threshold_op_input(input, "node_keyness_threshold")
     # inset個数が2以上の時だけ、複数inset設定(各行のinset_position/
     # frontier_n/5种filter)を組み立てる——1個の時はこれまで通り、
     # 上のフィルタ欄(edge_threshold等)+inset_position(単一値)で
@@ -876,10 +889,10 @@ server <- function(input, output, session) {
           inset_position = input[[.id("inset_position")]],
           frontier_n = input[[.id("frontier_n")]],
           filters = setNames(lapply(c("edge", "dispersion", "node_dispersion",
-                                       "frequency", "node_frequency"), function(type) {
+                                       "frequency", "node_frequency", "node_keyness"), function(type) {
             tid <- .id(paste0(type, "_threshold"))
             list(value = .resolve_threshold(input, tid), op = .resolve_threshold_op_input(input, tid))
-          }), c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency"))
+          }), c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency", "node_keyness"))
         )
       })
     } else NULL
@@ -904,6 +917,8 @@ server <- function(input, output, session) {
       frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
       node_frequency_threshold_op = node_frequency_threshold_op,
+      node_keyness_threshold = node_keyness_threshold,
+      node_keyness_threshold_op = node_keyness_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
@@ -957,6 +972,8 @@ server <- function(input, output, session) {
       frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
       node_frequency_threshold_op = node_frequency_threshold_op,
+      node_keyness_threshold = node_keyness_threshold,
+      node_keyness_threshold_op = node_keyness_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,

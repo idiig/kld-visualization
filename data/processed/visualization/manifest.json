@@ -2,7 +2,16 @@
   "budatemajor-vs-gender-first4.tsv": {
     "asset": "budatemajor-vs-gender-first4.rds",
     "rows": 18,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "n_target", "n_not_target", "total_freq", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "n_target",
+      "n_not_target",
+      "total_freq",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "1e907df6a9874b5731e7966f32050f33"
@@ -10,7 +19,20 @@
   "concept-mostnarrow-vs-anthology-shinkokin.tsv": {
     "asset": "concept-mostnarrow-vs-anthology-shinkokin.rds",
     "rows": 5208,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "29ec247935c7019dbdc2271ef26e38e6"
@@ -18,7 +40,20 @@
   "concept-mostnarrow-vs-gender-first4.tsv": {
     "asset": "concept-mostnarrow-vs-gender-first4.rds",
     "rows": 4824,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "b1c54d5e7759dea6d6d5a6d9b3c9a720"
@@ -26,7 +61,20 @@
   "entry-vs-anthology-shinkokin.tsv": {
     "asset": "entry-vs-anthology-shinkokin.rds",
     "rows": 32768,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "2fa69555a139f17fab59b9e147c91d8d"
@@ -34,7 +82,20 @@
   "entry-vs-budatemajor-koi-first4.tsv": {
     "asset": "entry-vs-budatemajor-koi-first4.rds",
     "rows": 25704,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "59297a768cee0cdc830afc42eaafd801"
@@ -42,7 +103,20 @@
   "entry-vs-gender-first4.tsv": {
     "asset": "entry-vs-gender-first4.rds",
     "rows": 25704,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "1b2e2a329a9b76ea963e4c7945b57d22"
@@ -50,7 +124,20 @@
   "entry-vs-gender-gosen-shuui-goshuui.tsv": {
     "asset": "entry-vs-gender-gosen-shuui-goshuui.rds",
     "rows": 23280,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "0654c3c40fac3e925f5132f0c5ad8b44"
@@ -58,7 +145,20 @@
   "entry-vs-gender-kokin.tsv": {
     "asset": "entry-vs-gender-kokin.rds",
     "rows": 14296,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "b86652b796a0416ba2feb217479c6a06"
@@ -66,7 +166,20 @@
   "kokin-female-without-filter.tsv": {
     "asset": "kokin-female-without-filter.rds",
     "rows": 416,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "field"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "field"
+    ],
     "field1": {},
     "field2": {},
     "source_md5": "f8acacd9a2f849f3054bb53a319097d9"
@@ -74,25 +187,97 @@
   "pair-entry-budatemajor-vs-gender-first4.tsv": {
     "asset": "pair-entry-budatemajor-vs-gender-first4.rds",
     "rows": 58168,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "w1",
+      "w2",
+      "field1",
+      "field2",
+      "freq1",
+      "freq2",
+      "dispersion1",
+      "dispersion2",
+      "assoc_w1_to_w2",
+      "assoc_w2_to_w1",
+      "keyness1",
+      "keyness2"
+    ],
     "field1": "部立大分類",
     "field2": "語",
-    "source_md5": "f92b1d7c227c37fc0e2e0329507f6fda"
+    "source_md5": "465185cd9ea0fd12b0f5ba08e1d5a1a0"
   },
   "pair-entry-entry-vs-anthology-shinkokin.tsv": {
     "asset": "pair-entry-entry-vs-anthology-shinkokin.rds",
     "rows": 2411720,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "w1",
+      "w2",
+      "field1",
+      "field2",
+      "freq1",
+      "freq2",
+      "dispersion1",
+      "dispersion2",
+      "assoc_w1_to_w2",
+      "assoc_w2_to_w1",
+      "keyness1",
+      "keyness2"
+    ],
     "field1": "語",
     "field2": "語",
-    "source_md5": "cf5a6f04b216d51d1bba652833e3b213"
+    "source_md5": "c5c787e690387eabedc0f8f136f1c4bc"
   },
   "pair-entry-entry-vs-gender-first4.tsv": {
     "asset": "pair-entry-entry-vs-gender-first4.rds",
     "rows": 1362256,
-    "columns": ["point", "frequency_type", "kld_variant", "keyness", "frequency", "total_freq", "n_target", "n_not_target", "node_size", "dispersion", "dispersion_difference", "w1", "w2", "field1", "field2", "freq1", "freq2", "dispersion1", "dispersion2", "assoc_w1_to_w2", "assoc_w2_to_w1"],
+    "columns": [
+      "point",
+      "frequency_type",
+      "kld_variant",
+      "keyness",
+      "frequency",
+      "total_freq",
+      "n_target",
+      "n_not_target",
+      "node_size",
+      "dispersion",
+      "dispersion_difference",
+      "w1",
+      "w2",
+      "field1",
+      "field2",
+      "freq1",
+      "freq2",
+      "dispersion1",
+      "dispersion2",
+      "assoc_w1_to_w2",
+      "assoc_w2_to_w1",
+      "keyness1",
+      "keyness2"
+    ],
     "field1": "語",
     "field2": "語",
-    "source_md5": "c5e8a726240d33409dbddd92eb75b067"
+    "source_md5": "fc8cd183f0af8044c9e16d295d58a06c"
   }
 }

@@ -209,38 +209,51 @@ library(ggrepel)
 # THRESHOLD为NULL或任一列不存在(word版表没有pair专属列)时整行TRUE(no-op)，
 # 跟改动前的5个函数行为一致。返回逻辑向量而不是直接子集——
 # .selection_filter_idx()要在不实际裁剪d的情况下，把5种filter的mask
-# 结果取交集，只选不删。
-.threshold_mask <- function(d, cols, threshold, op = "gte") {
+# 结果取交集，只选不删。USE_ABS(2026-11-07新增，给node_keyness用)：比较
+# 前先取abs(v)——跟其余几种filter直接比较原始值不同，node_keyness本身
+# 是带符号的KLD，draft.org:1211-1212的门槛是"绝对值不超过0.8"，不是
+# "值本身不超过0.8"。
+.threshold_mask <- function(d, cols, threshold, op = "gte", use_abs = FALSE) {
   if (is.null(threshold) || !all(vapply(cols, function(c) !is.null(d[[c]]), logical(1)))) {
     return(rep(TRUE, nrow(d)))
   }
   op <- .resolve_threshold_op(op)
   Reduce(`&`, lapply(cols, function(c) {
     v <- d[[c]]
+    if (use_abs) v <- abs(v)
     if (identical(op, "gte")) !is.na(v) & v >= threshold else !is.na(v) & v <= threshold
   }))
 }
 
-.filter_by_columns <- function(d, cols, threshold, op = "gte") {
-  d[.threshold_mask(d, cols, threshold, op), ]
+.filter_by_columns <- function(d, cols, threshold, op = "gte", use_abs = FALSE) {
+  d[.threshold_mask(d, cols, threshold, op, use_abs), ]
 }
 
-# 5种filter各自对应的列名，.selection_filter_idx()/.inset_filter_desc()
+# 6种filter各自对应的列名，.selection_filter_idx()/.inset_filter_desc()
 # 共用这份映射，不在两处分别写死列名。edge在这里也有一份(用于每个inset
 # config自己的选择性edge filter)，跟顶层edge_threshold是两件不同的事——
 # 顶层edge_threshold在draw_point_vs_target()里直接调filter_by_edge_
 # strength()裁剪主图数据d(结构性约束)；这里的"edge"条目是给
 # .selection_filter_idx()用的，只选不删，让每个inset config可以有自己
 # 独立于主图的边阈值(比如同一张图里5个inset各展示不同的连关门槛)。
+# node_keyness(2026-11-07新增)：pair片侧(w1/w2)各自的单词单位keyness，
+# 列名keyness1/keyness2来自build_pair_enriched_table.R新增的join，跟
+# freq1/freq2、dispersion1/dispersion2同一个"pair片侧"命名风格。
 .SELECTION_FILTER_COLS <- list(
   edge = c("assoc_w1_to_w2", "assoc_w2_to_w1"),
   dispersion = "dispersion",
   node_dispersion = c("dispersion1", "dispersion2"),
   frequency = "total_freq",
-  node_frequency = c("freq1", "freq2")
+  node_frequency = c("freq1", "freq2"),
+  node_keyness = c("keyness1", "keyness2")
 )
 
-# 汇总5种选择性filter各自的value+op成一份具名list，顶层调用(默认不传
+# どのfilterがabs(v)を取ってから比較するか——今のところnode_keynessだけ
+# (符号付きKLDの「絶対値」を見る、draft.org:1211-1212)。ここに無いkeyは
+# FALSE扱い(.threshold_mask自身のデフォルトと同じ)。
+.SELECTION_FILTER_ABS <- c(node_keyness = TRUE)
+
+# 汇总6种选择性filter各自的value+op成一份具名list，顶层调用(默认不传
 # edge——顶层的edge由edge_threshold直接裁剪主图d，不需要再选择性地筛
 # 一遍)和每个inset config自己的filter设置都用这同一个构造函数，不是
 # 分别维护两套逻辑。某个value为NULL表示这种filter不启用。
@@ -248,17 +261,19 @@ library(ggrepel)
                                     dispersion = NULL, dispersion_op = "gte",
                                     node_dispersion = NULL, node_dispersion_op = "gte",
                                     frequency = NULL, frequency_op = "gte",
-                                    node_frequency = NULL, node_frequency_op = "gte") {
+                                    node_frequency = NULL, node_frequency_op = "gte",
+                                    node_keyness = NULL, node_keyness_op = "gte") {
   list(
     edge = list(value = edge, op = edge_op),
     dispersion = list(value = dispersion, op = dispersion_op),
     node_dispersion = list(value = node_dispersion, op = node_dispersion_op),
     frequency = list(value = frequency, op = frequency_op),
-    node_frequency = list(value = node_frequency, op = node_frequency_op)
+    node_frequency = list(value = node_frequency, op = node_frequency_op),
+    node_keyness = list(value = node_keyness, op = node_keyness_op)
   )
 }
 
-# SPEC里5种filter依次取交集(都只选、不删)套用在D上，返回满足全部条件的
+# SPEC里6种filter依次取交集(都只选、不删)套用在D上，返回满足全部条件的
 # 行的整数下标——用下标不用直接子集，因为调用方(.compute_point_colors的
 # frontier着色、select_badges的候选池)都需要能跟nrow(d)对上号，直接子集
 # 会丢失"这是d的第几行"这个信息。
@@ -267,7 +282,8 @@ library(ggrepel)
   for (key in names(.SELECTION_FILTER_COLS)) {
     f <- spec[[key]]
     if (is.null(f) || is.null(f$value)) next
-    mask <- mask & .threshold_mask(d, .SELECTION_FILTER_COLS[[key]], f$value, f$op)
+    mask <- mask & .threshold_mask(d, .SELECTION_FILTER_COLS[[key]], f$value, f$op,
+                                    use_abs = isTRUE(.SELECTION_FILTER_ABS[[key]]))
   }
   which(mask)
 }
@@ -276,7 +292,8 @@ library(ggrepel)
 # header)，比如"分散度 ≥ 0.1、頻度 ≥ 5"——没有任何filter启用时返回
 # "(フィルタなし)"，不留空行。
 .FILTER_DESC_LABEL <- c(edge = "連関", dispersion = "分散度", node_dispersion = "語の分散度",
-                         frequency = "頻度", node_frequency = "語の頻度")
+                         frequency = "頻度", node_frequency = "語の頻度",
+                         node_keyness = "語自身のKLD")
 .FILTER_DESC_OP_SYMBOL <- c(gte = "≥", lte = "≤")
 
 .inset_filter_desc <- function(spec) {
@@ -332,6 +349,18 @@ filter_by_node_frequency <- function(d, threshold, op = "gte") {
   # side word. Both sides must satisfy the threshold. word table has no
   # freq1/freq2, no-op
   .filter_by_columns(d, c("freq1", "freq2"), threshold, op)
+}
+
+filter_by_node_keyness <- function(d, threshold, op = "gte") {
+  # pair only, mirrors reproduction/pair_feature_list_reproduce.org's
+  # own filter_by_node_keyness (draft.org:1211-1212): a word-pair whose
+  # OWN single-word KLD toward the target already exceeds the threshold
+  # doesn't contribute new information beyond what the single-word
+  # analysis already captured, regardless of the pair's combined
+  # keyness -- so both sides' own keyness (signed, hence use_abs=TRUE)
+  # must stay within the threshold. word table has no keyness1/
+  # keyness2, no-op.
+  .filter_by_columns(d, c("keyness1", "keyness2"), threshold, op, use_abs = TRUE)
 }
 
 .draw_axes <- function(d, ranges, nofreq, axis_label, point_label, x_break = NULL, y_break = NULL,
@@ -1788,7 +1817,8 @@ resolve_annotation_inputs <- function(annotate_words, annotate_words_file,
   dispersion = "numeric", dispersion_difference = "numeric", field = "character",
   w1 = "character", w2 = "character", field1 = "character", field2 = "character",
   freq1 = "numeric", freq2 = "numeric", dispersion1 = "numeric", dispersion2 = "numeric",
-  assoc_w1_to_w2 = "numeric", assoc_w2_to_w1 = "numeric"
+  assoc_w1_to_w2 = "numeric", assoc_w2_to_w1 = "numeric",
+  keyness1 = "numeric", keyness2 = "numeric"
 )
 
 load_and_merge_input <- function(input) {
@@ -1977,6 +2007,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   frequency_threshold_op = "gte",
                                   node_frequency_threshold = NULL,
                                   node_frequency_threshold_op = "gte",
+                                  node_keyness_threshold = NULL,
+                                  node_keyness_threshold_op = "gte",
                                   aggregate_locators = TRUE,
                                   max_group_members = 50,
                                   network_scale = 0.01,
@@ -2032,13 +2064,16 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   frequency_threshold_op <- .resolve_threshold_op(frequency_threshold_op)
   node_frequency_threshold <- if (!is.null(node_frequency_threshold)) as.numeric(node_frequency_threshold) else NULL
   node_frequency_threshold_op <- .resolve_threshold_op(node_frequency_threshold_op)
+  node_keyness_threshold <- if (!is.null(node_keyness_threshold)) as.numeric(node_keyness_threshold) else NULL
+  node_keyness_threshold_op <- .resolve_threshold_op(node_keyness_threshold_op)
   # 只有edge_threshold真正从主图删点——双方向连关不够的pair本身不该出现
-  # 在图上，这是结构性约束；其余4种无论是在这里(顶层)还是某个inset
-  # config自己设置，都只用来挑badge/frontier/inset候选，绝不删除主图上
-  # 的点(2026-11-07确认的设计决定：主图应该展示"完整的点云"，候选筛选
-  # 是另一件事)。这4种的值/op先汇总进selection_spec，稍后在坐标轴交换、
-  # 断轴之后才用.selection_filter_idx()实际算出候选下标——那时的d$frequency/
-  # d$keyness才是下游(badge排版/.compute_zoom_box等)真正会读到的坐标系。
+  # 在图上，这是结构性约束；其余5种(node_keyness是2026-11-07新增的第5种)
+  # 无论是在这里(顶层)还是某个inset config自己设置，都只用来挑badge/
+  # frontier/inset候选，绝不删除主图上的点(2026-11-07确认的设计决定：
+  # 主图应该展示"完整的点云"，候选筛选是另一件事)。这5种的值/op先汇总进
+  # selection_spec，稍后在坐标轴交换、断轴之后才用.selection_filter_idx()
+  # 实际算出候选下标——那时的d$frequency/d$keyness才是下游(badge排版/
+  # .compute_zoom_box等)真正会读到的坐标系。
   d <- filter_by_edge_strength(d, edge_threshold, edge_threshold_op)
   # Threshold设得太严会把全部行筛空，之后range(d$frequency)/range(d$keyness)
   # 会变成c(Inf, -Inf)，在plot.window()深处炸出一句看不出原因的
@@ -2102,7 +2137,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
     dispersion = dispersion_threshold, dispersion_op = dispersion_threshold_op,
     node_dispersion = node_dispersion_threshold, node_dispersion_op = node_dispersion_threshold_op,
     frequency = frequency_threshold, frequency_op = frequency_threshold_op,
-    node_frequency = node_frequency_threshold, node_frequency_op = node_frequency_threshold_op
+    node_frequency = node_frequency_threshold, node_frequency_op = node_frequency_threshold_op,
+    node_keyness = node_keyness_threshold, node_keyness_op = node_keyness_threshold_op
   )
   cand_idx <- .selection_filter_idx(d, selection_spec)
   colors <- .compute_point_colors(d, highlight, highlight_pairs, annotate_point_exclude,
@@ -2803,7 +2839,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
         dispersion = filt_val("dispersion"), dispersion_op = filt_op("dispersion"),
         node_dispersion = filt_val("node_dispersion"), node_dispersion_op = filt_op("node_dispersion"),
         frequency = filt_val("frequency"), frequency_op = filt_op("frequency"),
-        node_frequency = filt_val("node_frequency"), node_frequency_op = filt_op("node_frequency")
+        node_frequency = filt_val("node_frequency"), node_frequency_op = filt_op("node_frequency"),
+        node_keyness = filt_val("node_keyness"), node_keyness_op = filt_op("node_keyness")
       )
     )
   })
@@ -2850,6 +2887,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     frequency_threshold_op = .arg("frequency_threshold_op", "gte"),
     node_frequency_threshold = .arg("node_frequency_threshold"),
     node_frequency_threshold_op = .arg("node_frequency_threshold_op", "gte"),
+    node_keyness_threshold = .arg("node_keyness_threshold"),
+    node_keyness_threshold_op = .arg("node_keyness_threshold_op", "gte"),
     aggregate_locators = tolower(.arg("aggregate_locators", "true")) == "true",
     max_group_members = as.numeric(.arg("max_group_members", "50")),
     network_scale = as.numeric(.arg("network_scale", "0.01")),
