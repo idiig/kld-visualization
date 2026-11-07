@@ -534,7 +534,8 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
                                    category_palettes = category_color_palettes(),
                                    default_palette = default_color_palette(),
                                    neutral_palette = neutral_color_palette(),
-                                   gradient_palette = gradient_color_palette()) {
+                                   gradient_palette = gradient_color_palette(),
+                                   unselected_alpha = 0.05) {
   # Shade now tracks dispersion_difference (D_T - D_R, signed) instead
   # of the pooled dispersion already shown on the Y axis. A tsv
   # regenerated after this column existed but without the aux stats
@@ -573,10 +574,12 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
   # (has_categories==FALSE，纯dispersion渐变、没有highlight/highlight_
   # pairs/highlight_frontier)时适用——一旦存在某种"选中"概念，未被选中的
   # 点应该明显比被选中的点更淡，才能让选中的点"跳出来"(2026-10-19之前
-  # 一直是0.85，跟被选中的点几乎同样显眼；2026-11-07用户要求"不被选择的
-  # 点改成透明度0.2")。被选中的点(下面is_match覆盖的.abs_ramp结果)没有
-  # 套adjustcolor、保持完全不透明，两者对比由此拉开。
-  base_alpha <- if (has_categories) 0.2 else 0.85
+  # 一直是0.85，跟被选中的点几乎同样显眼；2026-11-07用户先要求"不被选择
+  # 的点改成透明度0.2"，当天晚些时候又改要求"淡化改成flag"、把这个数值
+  # 从写死改成unselected_alpha参数，UI上也能调)。被选中的点(下面is_match
+  # 覆盖的.abs_ramp结果)没有套adjustcolor、保持完全不透明，两者对比由此
+  # 拉开。
+  base_alpha <- if (has_categories) unselected_alpha else 0.85
   point_col <- adjustcolor(.linear_ramp(dispersion, signed_range, gradient_palette["lo"],
                                          gradient_palette["hi"]),
                             alpha.f = base_alpha)
@@ -677,7 +680,8 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
   list(point_col = point_col, signed_range = signed_range, legend_cols = legend_cols,
        type_ramps = type_ramps, default_palette = default_palette,
        dispersion = dispersion, abs_range = abs_range,
-       frontier_match_idx = frontier_match_idx, frontier_pal = frontier_pal)
+       frontier_match_idx = frontier_match_idx, frontier_pal = frontier_pal,
+       unselected_alpha = unselected_alpha)
 }
 
 # frontier色付け/frontierバッジ選定どちらにも使う"POOL_IDX（NULLなら全D）
@@ -1982,7 +1986,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   annotate_pairs_file = NULL,
                                   kld_variant = NULL,
                                   frequency_type = NULL,
-                                  label_lang = "ja") {
+                                  label_lang = "ja",
+                                  unselected_alpha = 0.05) {
   # badge_layout="network"splices graphviz output in as svg XML text
   # (.splice_network_glyphs below) -- that only makes sense for a real
   # vector output, never png. Rather than make the caller get this
@@ -2101,7 +2106,8 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   )
   cand_idx <- .selection_filter_idx(d, selection_spec)
   colors <- .compute_point_colors(d, highlight, highlight_pairs, annotate_point_exclude,
-                                   highlight_frontier, frontier_n, frontier_candidate_idx = cand_idx)
+                                   highlight_frontier, frontier_n, frontier_candidate_idx = cand_idx,
+                                   unselected_alpha = unselected_alpha)
   d$point_col <- colors$point_col
   # 存成d的一列而不是独立变量，让它跟着d一起被badge_rows/dd这些子集操作
   # 自动带过去，不用在每处子集代码另外重新计算
@@ -2136,13 +2142,13 @@ draw_point_vs_target <- function(input, output, point_label = "point",
       stale_idx <- global_idx[!global_idx %in% union_idx]
       if (length(stale_idx) > 0) {
         # 复原回"未被选中"的基础渐变色——这里跑得到的分支是highlight_
-        # frontier==TRUE(has_categories必为TRUE)，所以跟.compute_point_
-        # colors里base_alpha的选择保持一致，用0.2而不是0.85(2026-11-07
-        # 用户要求"不被选择的点改成透明度0.2")。
+        # frontier==TRUE(has_categories必为TRUE)，读colors$unselected_alpha
+        # (.compute_point_colors算base_alpha时用的同一个值，随返回值带出来)
+        # 而不是另外写死一份，保证跟正文点的淡化程度一致。
         gp <- gradient_color_palette()
         d$point_col[stale_idx] <- adjustcolor(
           .linear_ramp(colors$dispersion[stale_idx], colors$signed_range, gp["lo"], gp["hi"]),
-          alpha.f = 0.2)
+          alpha.f = colors$unselected_alpha)
       }
       if (length(union_idx) > 0) {
         d$point_col[union_idx] <- .abs_ramp(colors$dispersion[union_idx], colors$abs_range,
@@ -2569,12 +2575,12 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
       if (any(was_global_frontier)) {
         reset_idx <- cand_idx[was_global_frontier]
         gp <- gradient_color_palette()
-        # 同.compute_point_colors的base_alpha选择：highlight_frontier==TRUE
-        # 分支下has_categories必为TRUE，复原成的"未被选中"基础色要用0.2
-        # (2026-11-07)，不是旧的0.85。
+        # 同.compute_point_colors的base_alpha选择：读colors$unselected_alpha
+        # (随.compute_point_colors的返回值带出来，跟正文点的淡化程度保持
+        # 一致)，不是另外写死一份数值。
         base_col <- adjustcolor(
           .linear_ramp(colors$dispersion[reset_idx], colors$signed_range, gp["lo"], gp["hi"]),
-          alpha.f = 0.2)
+          alpha.f = colors$unselected_alpha)
         d_eligible$point_col[was_global_frontier] <- base_col
       }
       local_match <- .frontier_match_idx(d, cfg$frontier_n, cand_idx, annotate_point_exclude)
@@ -2851,7 +2857,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     point_field = .arg("point_field", "entry"),
     kld_variant = .arg("kld_variant"),
     frequency_type = .arg("frequency_type"),
-    label_lang = .arg("label_lang", "ja")
+    label_lang = .arg("label_lang", "ja"),
+    unselected_alpha = as.numeric(.arg("unselected_alpha", "0.05"))
   )
 }
 

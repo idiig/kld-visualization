@@ -209,6 +209,9 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   updateCheckboxInput(session, "annotate_nontarget_only", value = .bool("annotate_nontarget_only"))
   updateTextInput(session, "annotate_point_exclude", value = .get("annotate_point_exclude") %||% "")
   updateCheckboxInput(session, "highlight_frontier", value = .bool("highlight_frontier"))
+  unselected_alpha <- .num("unselected_alpha")
+  updateNumericInput(session, "unselected_alpha",
+                      value = if (is.na(unselected_alpha)) 0.05 else unselected_alpha)
 
   .select_file("annotate_words_file", "annotate_words_file")
   .select_file("highlight_file", "highlight_file")
@@ -461,7 +464,8 @@ if (is.null(.INITIAL_LABELS)) {
 ALL_PARAM_KEYS <- c(
   "kld_variant", "frequency_type", "point_label", "axis_label", "value_label", "badge_selection",
   "aggregate_locators", .threshold_key_pairs(), "frontier_n", "annotate_nontarget_only",
-  "annotate_point_exclude", "highlight_frontier", "annotate_words_file", "highlight_file",
+  "annotate_point_exclude", "highlight_frontier", "unselected_alpha",
+  "annotate_words_file", "highlight_file",
   "highlight_pairs_file", "annotate_pairs_file",
   "inset", "inset_position", "inset_pad_frac",
   "zoom_annotated_only", "repel_annotated_only",
@@ -602,6 +606,15 @@ ui <- fluidPage(
                     "highlight_frontier (frequencyがfrontier中点より大きい点を染色、badge_selectionと独立)",
                     value = FALSE),
       .cmd_toggle("highlight_frontier"),
+      # highlight/highlight_pairs/highlight_frontierのいずれかで「選ばれた
+      # 点」がある時だけ、選ばれなかった点をこの値まで薄くする(2026-11-07、
+      # 元は0.2固定、同日中にユーザーが「flagにしてUIでも調整できるように」
+      # と変更)。選ぶ側の概念が1つも無ければ無視される(plot_point_vs_
+      # target.R側のhas_categories判定、ここでは再現しない)。
+      numericInput("unselected_alpha",
+                   "unselected_alpha (highlight/highlight_frontier選択時、非選択点の透明度)",
+                   value = 0.05, min = 0, max = 1, step = 0.05),
+      .cmd_toggle("unselected_alpha"),
       conditionalPanel(
         condition = "input.badge_selection == 'words' && input.annotate_words_file != '(none)'",
         checkboxInput("annotate_nontarget_only",
@@ -895,6 +908,7 @@ server <- function(input, output, session) {
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
       highlight_frontier = input$highlight_frontier,
+      unselected_alpha = input$unselected_alpha,
       annotate_words_file = annotate_words_file,
       highlight_file = highlight_file,
       highlight_pairs_file = highlight_pairs_file,
@@ -947,6 +961,7 @@ server <- function(input, output, session) {
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
       highlight_frontier = input$highlight_frontier,
+      unselected_alpha = input$unselected_alpha,
       annotate_words_file = .rel_ref(input$annotate_words_file),
       highlight_file = .rel_ref(input$highlight_file),
       highlight_pairs_file = .rel_ref(input$highlight_pairs_file),
