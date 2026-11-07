@@ -184,58 +184,154 @@ library(ggrepel)
   list(canvas_scale = canvas_scale, panel_h_in = panel_h_in)
 }
 
-filter_by_edge_strength <- function(d, threshold) {
+# "gte"(以上，默认)/"lte"(以下)两种比较方向——以前所有5个filter_by_*都
+# 硬编码严格">"，跟原文"以上"(>=)的语义不符(2026-11-07确认修复)；新增
+# "lte"是为了对称地支持"只要这个值足够小"的场景(比如只看低频/低离散度
+# 的候选)。容错大小写和">="/"<="/"ge"/"le"这几种常见写法，非法值直接
+# stop()——不能悄悄当默认"gte"处理，否则CLI/app.R传错了op会在数据上产生
+# 看不出来的静默错误。
+.THRESHOLD_OPS <- c(gte = ">=", lte = "<=")
+
+.resolve_threshold_op <- function(op) {
+  if (is.null(op) || is.na(op)) return("gte")
+  norm <- tolower(trimws(op))
+  norm <- switch(norm, ">=" = "gte", "<=" = "lte", "ge" = "gte", "le" = "lte", norm)
+  if (!norm %in% names(.THRESHOLD_OPS)) {
+    stop("threshold op must be one of gte/lte (or >=/<=/ge/le), got: ", op)
+  }
+  norm
+}
+
+# 5个filter_by_*和.selection_filter_idx()共用的核心比较逻辑：COLS全部
+# 非NA且全部满足比较(op=="gte"时>=threshold，op=="lte"时<=threshold)才算
+# 保留——两侧同时约束(比如pair的assoc_w1_to_w2/assoc_w2_to_w1两条边)时
+# 沿用原来"两边都要满足"的语义，不因为换成lte就变成"任一边满足即可"。
+# THRESHOLD为NULL或任一列不存在(word版表没有pair专属列)时整行TRUE(no-op)，
+# 跟改动前的5个函数行为一致。返回逻辑向量而不是直接子集——
+# .selection_filter_idx()要在不实际裁剪d的情况下，把5种filter的mask
+# 结果取交集，只选不删。
+.threshold_mask <- function(d, cols, threshold, op = "gte") {
+  if (is.null(threshold) || !all(vapply(cols, function(c) !is.null(d[[c]]), logical(1)))) {
+    return(rep(TRUE, nrow(d)))
+  }
+  op <- .resolve_threshold_op(op)
+  Reduce(`&`, lapply(cols, function(c) {
+    v <- d[[c]]
+    if (identical(op, "gte")) !is.na(v) & v >= threshold else !is.na(v) & v <= threshold
+  }))
+}
+
+.filter_by_columns <- function(d, cols, threshold, op = "gte") {
+  d[.threshold_mask(d, cols, threshold, op), ]
+}
+
+# 5种filter各自对应的列名，.selection_filter_idx()/.inset_filter_desc()
+# 共用这份映射，不在两处分别写死列名。edge在这里也有一份(用于每个inset
+# config自己的选择性edge filter)，跟顶层edge_threshold是两件不同的事——
+# 顶层edge_threshold在draw_point_vs_target()里直接调filter_by_edge_
+# strength()裁剪主图数据d(结构性约束)；这里的"edge"条目是给
+# .selection_filter_idx()用的，只选不删，让每个inset config可以有自己
+# 独立于主图的边阈值(比如同一张图里5个inset各展示不同的连关门槛)。
+.SELECTION_FILTER_COLS <- list(
+  edge = c("assoc_w1_to_w2", "assoc_w2_to_w1"),
+  dispersion = "dispersion",
+  node_dispersion = c("dispersion1", "dispersion2"),
+  frequency = "total_freq",
+  node_frequency = c("freq1", "freq2")
+)
+
+# 汇总5种选择性filter各自的value+op成一份具名list，顶层调用(默认不传
+# edge——顶层的edge由edge_threshold直接裁剪主图d，不需要再选择性地筛
+# 一遍)和每个inset config自己的filter设置都用这同一个构造函数，不是
+# 分别维护两套逻辑。某个value为NULL表示这种filter不启用。
+.selection_filter_spec <- function(edge = NULL, edge_op = "gte",
+                                    dispersion = NULL, dispersion_op = "gte",
+                                    node_dispersion = NULL, node_dispersion_op = "gte",
+                                    frequency = NULL, frequency_op = "gte",
+                                    node_frequency = NULL, node_frequency_op = "gte") {
+  list(
+    edge = list(value = edge, op = edge_op),
+    dispersion = list(value = dispersion, op = dispersion_op),
+    node_dispersion = list(value = node_dispersion, op = node_dispersion_op),
+    frequency = list(value = frequency, op = frequency_op),
+    node_frequency = list(value = node_frequency, op = node_frequency_op)
+  )
+}
+
+# SPEC里5种filter依次取交集(都只选、不删)套用在D上，返回满足全部条件的
+# 行的整数下标——用下标不用直接子集，因为调用方(.compute_point_colors的
+# frontier着色、select_badges的候选池)都需要能跟nrow(d)对上号，直接子集
+# 会丢失"这是d的第几行"这个信息。
+.selection_filter_idx <- function(d, spec) {
+  mask <- rep(TRUE, nrow(d))
+  for (key in names(.SELECTION_FILTER_COLS)) {
+    f <- spec[[key]]
+    if (is.null(f) || is.null(f$value)) next
+    mask <- mask & .threshold_mask(d, .SELECTION_FILTER_COLS[[key]], f$value, f$op)
+  }
+  which(mask)
+}
+
+# SPEC -> 一行人类可读的日语描述，画在每个inset放大框上方(.draw_inset_
+# header)，比如"分散度 ≥ 0.1、頻度 ≥ 5"——没有任何filter启用时返回
+# "(フィルタなし)"，不留空行。
+.FILTER_DESC_LABEL <- c(edge = "連関", dispersion = "分散度", node_dispersion = "語の分散度",
+                         frequency = "頻度", node_frequency = "語の頻度")
+.FILTER_DESC_OP_SYMBOL <- c(gte = "≥", lte = "≤")
+
+.inset_filter_desc <- function(spec) {
+  parts <- character(0)
+  for (key in names(.FILTER_DESC_LABEL)) {
+    f <- spec[[key]]
+    if (!is.null(f) && !is.null(f$value)) {
+      op_sym <- .FILTER_DESC_OP_SYMBOL[[.resolve_threshold_op(f$op)]]
+      parts <- c(parts, sprintf("%s %s %s", .FILTER_DESC_LABEL[[key]], op_sym,
+                                 format(f$value, trim = TRUE)))
+    }
+  }
+  if (length(parts) == 0) return("(フィルタなし)")
+  paste(parts, collapse = "、")
+}
+
+filter_by_edge_strength <- function(d, threshold, op = "gte") {
   # の等虚词类pair跟任何词搭配算出来的association都天然很弱(边际份额太高，
   # "这个词出现"这件事本身没什么信息量)，与keyness/frequency这两个轴衡量
   # 的pair-vs-gender关联无关，因此按pair自身两条边(assoc_w1_to_w2/
-  # assoc_w2_to_w1)是否都严格大于阈值过滤，不看轴上的数值；word版表没有
+  # assoc_w2_to_w1)是否都满足阈值过滤，不看轴上的数值；word版表没有
   # 这两列，no-op
-  if (is.null(threshold) || is.null(d$assoc_w1_to_w2)) return(d)
-  keep <- !is.na(d$assoc_w1_to_w2) & !is.na(d$assoc_w2_to_w1) &
-    d$assoc_w1_to_w2 > threshold & d$assoc_w2_to_w1 > threshold
-  d[keep, ]
+  .filter_by_columns(d, c("assoc_w1_to_w2", "assoc_w2_to_w1"), threshold, op)
 }
 
-filter_by_dispersion <- function(d, threshold) {
+filter_by_dispersion <- function(d, threshold, op = "gte") {
   # dispersion(含NA)过低的点/pair只集中在一两首歌里，即使keyness很高也
   # 可能只是偶然；word/pair两版表都有dispersion列
-  if (is.null(threshold) || is.null(d$dispersion)) return(d)
-  keep <- !is.na(d$dispersion) & d$dispersion > threshold
-  d[keep, ]
+  .filter_by_columns(d, "dispersion", threshold, op)
 }
 
-filter_by_node_dispersion <- function(d, threshold) {
+filter_by_node_dispersion <- function(d, threshold, op = "gte") {
   # pair专用，跟filter_by_dispersion互补：那个看pair整体(两词共现)的分布，
   # 这个看两侧entry各自单独的dispersion——pair整体共现分布均匀不代表其中
-  # 一侧entry本身不是全语料集中在寥寥几首诗里。两侧都要求>阈值，
+  # 一侧entry本身不是全语料集中在寥寥几首诗里。两侧都要满足阈值，
   # word版表没有dispersion1/dispersion2，no-op
-  if (is.null(threshold) || is.null(d$dispersion1) || is.null(d$dispersion2)) return(d)
-  keep <- !is.na(d$dispersion1) & !is.na(d$dispersion2) &
-    d$dispersion1 > threshold & d$dispersion2 > threshold
-  d[keep, ]
+  .filter_by_columns(d, c("dispersion1", "dispersion2"), threshold, op)
 }
 
-filter_by_frequency <- function(d, threshold) {
+filter_by_frequency <- function(d, threshold, op = "gte") {
   # dispersionとは別の判断基準——dispersionは「分布が1-2首に偏っている」
   # を捉える、これはそもそも「出現回数が少なすぎて信頼できない」を捉える
   # (2026-10-15、ユーザーと確認済み：両方残す、片方をもう片方に差し替える
   # のではない)。word/pair両版表ともtotal_freq列を持つのでpair限定の
   # ガードは不要
-  if (is.null(threshold) || is.null(d$total_freq)) return(d)
-  keep <- !is.na(d$total_freq) & d$total_freq > threshold
-  d[keep, ]
+  .filter_by_columns(d, "total_freq", threshold, op)
 }
 
-filter_by_node_frequency <- function(d, threshold) {
+filter_by_node_frequency <- function(d, threshold, op = "gte") {
   # pair only, mirrors filter_by_node_dispersion: filter_by_frequency
   # looks at the pair's combined total_freq, this looks at each side
   # entry's own freq1/freq2 -- a frequent pair can still have one rare
-  # side word. Both sides must exceed threshold. word table has no
+  # side word. Both sides must satisfy the threshold. word table has no
   # freq1/freq2, no-op
-  if (is.null(threshold) || is.null(d$freq1) || is.null(d$freq2)) return(d)
-  keep <- !is.na(d$freq1) & !is.na(d$freq2) &
-    d$freq1 > threshold & d$freq2 > threshold
-  d[keep, ]
+  .filter_by_columns(d, c("freq1", "freq2"), threshold, op)
 }
 
 .draw_axes <- function(d, ranges, nofreq, axis_label, point_label, x_break = NULL, y_break = NULL,
@@ -433,6 +529,7 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
                                    annotate_point_exclude = NULL,
                                    highlight_frontier = FALSE,
                                    frontier_n = 15,
+                                   frontier_candidate_idx = NULL,
                                    category_palettes = category_color_palettes(),
                                    default_palette = default_color_palette(),
                                    neutral_palette = neutral_color_palette(),
@@ -550,8 +647,16 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
   # 凑不够frontier_n个)，直接跟.select_badge_rows的frontier分支同一个
   # "排序后截断前N个"算法，保证只要d里有足够多的点就一定凑够frontier_n。
   if (isTRUE(highlight_frontier)) {
-    ord <- order(-d$frequency)
-    top_n <- min(frontier_n, nrow(d))
+    # frontier_candidate_idx(新增，2026-11-07)：排前N的候选池从"全部d"
+    # 收窄到这份下标——跟badge用的cand_idx(非edge的4种filter只选不删后
+    # 的候选池)保持一致，避免"着色的frontier"和"画badge/放大图的frontier"
+    # 用了不同的候选池、挑出两套不一样的点集这种不一致(2026-11-07新增的
+    # filter只选不删管线下，d本身不再被这4种filter裁剪，必须显式传候选池
+    # 下标才能让着色跟badge选中同一批点)。NULL时等价于全量d，跟改动前
+    # 完全一致。
+    pool_idx <- if (is.null(frontier_candidate_idx)) seq_len(nrow(d)) else frontier_candidate_idx
+    ord <- pool_idx[order(-d$frequency[pool_idx])]
+    top_n <- min(frontier_n, length(ord))
     top_idx <- ord[seq_len(top_n)]
     is_match <- seq_len(nrow(d)) %in% top_idx
     if (!is.null(annotate_point_exclude)) {
@@ -570,7 +675,9 @@ gradient_color_palette <- function() c(lo = "#E5E5E5", hi = "#1A1A1A")
 
 # ---- badge候选筛选 ----
 
-# 四种badge候选筛选方式，靠badge_selection切换：
+# 三种badge候选筛选方式，靠badge_selection切换(2026-11-07起删除了第四种
+# "zoom_box"手动取景范围——跟新增的、可以按边/频次/离散度任意组合筛选的
+# filter系统功能重叠，被后者取代)：
 #   "frontier" -- 按横轴(frequency，轴交换后其实是point->target的signed
 #     KLD)从高到低排序，直接取前frontier_n个，不依赖任何外部词表(2026-
 #     09-14确认放弃帕累托前沿的方案；2026-09-14到2026-10-19之间曾经是
@@ -645,7 +752,7 @@ filter_to_annotated_points <- function(rows, badge_rows) {
 .select_badge_rows <- function(d, annotate_words, label_top_n, neutral,
                                 annotate_nontarget_only, annotate_point_exclude,
                                 badge_selection = "words", frontier_n = 15,
-                                zoom_box = NULL, annotate_pairs = NULL) {
+                                annotate_pairs = NULL) {
   if (identical(badge_selection, "frontier")) {
     matched <- .dedup_pair_rows(d)
     matched <- matched[order(-matched$frequency), ]
@@ -653,15 +760,6 @@ filter_to_annotated_points <- function(rows, badge_rows) {
       matched <- matched[seq_len(frontier_n), ]
     }
     return(matched)
-  }
-  if (identical(badge_selection, "zoom_box")) {
-    # 扩大范围手动指定时(zoom_box参数)，范围内的点全部annotate，不再按
-    # frontier那样只挑keyness最高的frontier_n个——"扩大的范围内点都需要
-    # annotate"(用户2026-09-19明确要求)，取景范围本身就是选取条件
-    stopifnot(!is.null(zoom_box))
-    in_box <- d$frequency > zoom_box$x1 & d$frequency < zoom_box$x2 &
-      d$keyness > zoom_box$y1 & d$keyness < zoom_box$y2
-    return(.dedup_pair_rows(d[in_box, ]))
   }
   if (identical(badge_selection, "pairs")) {
     # 只对pair表(有w1/w2列)有意义，精确点名"就是这几对"——跟"words"模式
@@ -1663,46 +1761,6 @@ load_and_merge_input <- function(input) {
   if (length(tables) == 1) tables[[1]] else .rbind_fill(tables)
 }
 
-resolve_zoom_box <- function(zoom_box, zoom_x1, zoom_x2, zoom_y1, zoom_y2, badge_selection, d) {
-  # zoom_x1/x2/y1/y2是zoom_box的CLI友好写法(4个边界各自可选，没给的边界
-  # 退回数据本身的min/max)。badge_selection="zoom_box"时即使4个边界都没给
-  # 也必须建出zoom_box(全部退回min/max，等价于"整个图的范围都算")，不然
-  # .select_badge_rows()的zoom_box分支会因stopifnot(!is.null(zoom_box))报错
-  needs_box <- is.null(zoom_box) && (identical(badge_selection, "zoom_box") ||
-                                      !is.null(zoom_x1) || !is.null(zoom_x2) ||
-                                      !is.null(zoom_y1) || !is.null(zoom_y2))
-  if (!needs_box) return(zoom_box)
-  list(
-    x1 = if (!is.null(zoom_x1)) as.numeric(zoom_x1) else min(d$frequency),
-    x2 = if (!is.null(zoom_x2)) as.numeric(zoom_x2) else max(d$frequency),
-    y1 = if (!is.null(zoom_y1)) as.numeric(zoom_y1) else min(d$keyness),
-    y2 = if (!is.null(zoom_y2)) as.numeric(zoom_y2) else max(d$keyness)
-  )
-}
-
-# resolve_zoom_box()算出来的边界是pre-break坐标(用户在轴上读到/CLI填的
-# 真实KLD值，或者pre-break d的min/max兜底)，但断轴一旦触发，从这之后
-# d$frequency/d$keyness全部换成了压缩后的坐标——zoom_box不跟着换算的话，
-# 就是在拿"真实KLD值"当"压缩后坐标"直接用，两者数量级往往差几十倍
-# (fwd()在主区间的斜率是main_frac/main_end，通常远大于1)，画出来的框会
-# 紧贴轴根部退化成一条线，badge_selection="zoom_box"的筛选也会连带出错
-# (2026-09-25用户反馈"扩大表示时主图里的框横轴范围变得很奇怪，没有
-# 宽度")。fwd()是单调的，min/x1/y1和max/x2/y2各自单独换算，结果仍然
-# 是x1<x2、y1<y2的合法矩形，不需要额外排序。zoom_box为NULL(没用zoom_box
-# 相关选项)时原样返回，不受影响。
-.transform_zoom_box_for_breaks <- function(zoom_box, breaks) {
-  if (is.null(zoom_box)) return(zoom_box)
-  if (!is.null(breaks$x_break)) {
-    zoom_box$x1 <- breaks$x_break$fwd(zoom_box$x1)
-    zoom_box$x2 <- breaks$x_break$fwd(zoom_box$x2)
-  }
-  if (!is.null(breaks$y_break)) {
-    zoom_box$y1 <- breaks$y_break$fwd(zoom_box$y1)
-    zoom_box$y2 <- breaks$y_break$fwd(zoom_box$y2)
-  }
-  zoom_box
-}
-
 compute_point_shapes <- function(d, point_field) {
   # is_pair版(有w1列)维持"整张图统一一种形状"(pair合并展示的形状区分只放
   # 在network小图里)；非pair(word)版合并了多种field(entry/concept/topic)时
@@ -1718,12 +1776,12 @@ compute_point_shapes <- function(d, point_field) {
 }
 
 select_badges <- function(d, annotate_words, label_top_n, neutral, annotate_nontarget_only,
-                           annotate_point_exclude, badge_selection, frontier_n, zoom_box,
+                           annotate_point_exclude, badge_selection, frontier_n,
                            aggregate_locators, annotate_pairs = NULL) {
   rows <- .select_badge_rows(d, annotate_words, label_top_n, neutral,
                               annotate_nontarget_only, annotate_point_exclude,
                               badge_selection = badge_selection, frontier_n = frontier_n,
-                              zoom_box = zoom_box, annotate_pairs = annotate_pairs)
+                              annotate_pairs = annotate_pairs)
   # 同一locator(n_target/n_not_target完全相同、同一种pair/condition)上堆了
   # 不止1个候选时合并成一个badge，见.aggregate_locator_groups()自己的注释；
   # aggregate_locators=FALSE时跳过，退回聚合功能加入之前的行为
@@ -1834,20 +1892,21 @@ draw_point_vs_target <- function(input, output, point_label = "point",
                                   canvas_size = 450,
                                   inset = FALSE,
                                   inset_position = "top",
+                                  inset_configs = NULL,
                                   inset_border_col = "#FF073A",
                                   inset_pad_frac = 0.15,
                                   zoom_annotated_only = FALSE,
                                   repel_annotated_only = FALSE,
-                                  zoom_box = NULL,
-                                  zoom_x1 = NULL,
-                                  zoom_x2 = NULL,
-                                  zoom_y1 = NULL,
-                                  zoom_y2 = NULL,
                                   edge_threshold = NULL,
+                                  edge_threshold_op = "gte",
                                   dispersion_threshold = NULL,
+                                  dispersion_threshold_op = "gte",
                                   node_dispersion_threshold = NULL,
+                                  node_dispersion_threshold_op = "gte",
                                   frequency_threshold = NULL,
+                                  frequency_threshold_op = "gte",
                                   node_frequency_threshold = NULL,
+                                  node_frequency_threshold_op = "gte",
                                   aggregate_locators = TRUE,
                                   max_group_members = 50,
                                   network_scale = 0.01,
@@ -1876,7 +1935,7 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   annotate_pairs <- inputs$annotate_pairs
   d <- load_and_merge_input(input)
   # scripts/patches/visprepare.py now always merges all of its own
-  # POINT_VARIANTS ("obs"/"nofreq"/"norm") into one tsv with a
+  # POINT_VARIANTS ("obs"/"nofreq"/"norm"/"keyassoc") into one tsv with a
   # "kld_variant" column rather than writing one tsv per variant --
   # KLD_VARIANT, if given, is this function's own single place to pick
   # one variant's rows back out (trust upstream shape: the column is
@@ -1892,23 +1951,28 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # docstring. Still just one more row filter here either way.
   if (!is.null(frequency_type)) d <- d[d$frequency_type == frequency_type, ]
   edge_threshold <- if (!is.null(edge_threshold)) as.numeric(edge_threshold) else NULL
+  edge_threshold_op <- .resolve_threshold_op(edge_threshold_op)
   dispersion_threshold <- if (!is.null(dispersion_threshold)) as.numeric(dispersion_threshold) else NULL
+  dispersion_threshold_op <- .resolve_threshold_op(dispersion_threshold_op)
   node_dispersion_threshold <- if (!is.null(node_dispersion_threshold)) as.numeric(node_dispersion_threshold) else NULL
+  node_dispersion_threshold_op <- .resolve_threshold_op(node_dispersion_threshold_op)
   frequency_threshold <- if (!is.null(frequency_threshold)) as.numeric(frequency_threshold) else NULL
+  frequency_threshold_op <- .resolve_threshold_op(frequency_threshold_op)
   node_frequency_threshold <- if (!is.null(node_frequency_threshold)) as.numeric(node_frequency_threshold) else NULL
-  d <- filter_by_edge_strength(d, edge_threshold)
-  d <- filter_by_dispersion(d, dispersion_threshold)
-  d <- filter_by_node_dispersion(d, node_dispersion_threshold)
-  d <- filter_by_frequency(d, frequency_threshold)
-  d <- filter_by_node_frequency(d, node_frequency_threshold)
-  # Thresholds set too strict can filter every row out, which later makes
-  # range(d$frequency)/range(d$keyness) return c(Inf, -Inf) and crash deep
-  # inside plot.window() with a cryptic "need finite 'xlim' values" -- fail
-  # here instead, right where the actual cause (an empty d) is known.
+  node_frequency_threshold_op <- .resolve_threshold_op(node_frequency_threshold_op)
+  # 只有edge_threshold真正从主图删点——双方向连关不够的pair本身不该出现
+  # 在图上，这是结构性约束；其余4种无论是在这里(顶层)还是某个inset
+  # config自己设置，都只用来挑badge/frontier/inset候选，绝不删除主图上
+  # 的点(2026-11-07确认的设计决定：主图应该展示"完整的点云"，候选筛选
+  # 是另一件事)。这4种的值/op先汇总进selection_spec，稍后在坐标轴交换、
+  # 断轴之后才用.selection_filter_idx()实际算出候选下标——那时的d$frequency/
+  # d$keyness才是下游(badge排版/.compute_zoom_box等)真正会读到的坐标系。
+  d <- filter_by_edge_strength(d, edge_threshold, edge_threshold_op)
+  # Threshold设得太严会把全部行筛空，之后range(d$frequency)/range(d$keyness)
+  # 会变成c(Inf, -Inf)，在plot.window()深处炸出一句看不出原因的
+  # "need finite 'xlim' values"——提前在这里（真正的病因：d空了）报错。
   if (nrow(d) == 0) {
-    stop("No points left after filtering -- edge_threshold/dispersion_threshold/",
-         "node_dispersion_threshold/frequency_threshold/node_frequency_threshold ",
-         "are too strict for this dataset")
+    stop("No points left after filtering -- edge_threshold is too strict for this dataset")
   }
   # Snapshot taken before the frequency/keyness overwrite below -- the
   # annotated-points table (app.R's table tab) wants the real tsv-shaped
@@ -1944,10 +2008,6 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   d$frequency <- d$keyness
   d$keyness <- adjusted_frequency
   d$node_size <- d$dispersion
-  # zoom_box在这里(用pre-break的d$frequency/keyness当min/max兜底)解析，
-  # 早于下面的.apply_nofreq_breaks——2026-09-22发现的bug("选了zoom_box选项
-  # 但还没填4个边界时会报错")修复后就是这个顺序，沿用不变
-  zoom_box <- resolve_zoom_box(zoom_box, zoom_x1, zoom_x2, zoom_y1, zoom_y2, badge_selection, d)
 
   ranges <- .compute_axis_ranges(d, nofreq)
   breaks <- .apply_nofreq_breaks(d, nofreq)
@@ -1955,30 +2015,68 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # badge筛选(hi/lo按keyness跟neutral比较)要用跟d$keyness同一个坐标系——
   # d$keyness如果被断轴压缩过，neutral(理论中性点)也要用同一个fwd()换算
   neutral <- if (!is.null(breaks$y_break)) breaks$y_break$fwd(ranges$neutral) else ranges$neutral
-  # zoom_box跟上面的neutral同一类问题(2026-09-25用户反馈"扩大表示时主图里
-  # 的框横轴范围变得很奇怪，没有宽度")：zoom_box是用pre-break的d算出来的
-  # (见上面resolve_zoom_box那行的注释)，取的是用户在图上读到的真实KLD值，
-  # 但从这一行往下badge_rows/.draw_source_box/render_zoomed_scatter_panel
-  # 用的d$frequency/d$keyness都已经是断轴压缩后的坐标——不换算的话，
-  # zoom_box的边界值(比如0.001~0.003这种远小于压缩后典型取值的原始KLD数)
-  # 会被当成压缩后坐标直接使用，画出来的框自然退化成贴在轴根部的一条线，
-  # badge_selection="zoom_box"的取景筛选也会因此选中几乎全部或几乎没有点。
-  zoom_box <- .transform_zoom_box_for_breaks(zoom_box, breaks)
   # 颜色要在选badge_rows之前算好、点到d$point_col上——badge_rows是d的一份
   # 子集快照(data.frame子集是复制，不是引用)，先选badge_rows、后面才在d上
   # 补point_col列的话，badge_rows拿到的还是没有point_col列的旧快照
   # (2026-09-15曾经踩过的bug："badge在附图里"看起来不对，根源在此)
+  #
+  # cand_idx(2026-11-07新增)：edge以外4种filter(都只选、不删)套用在当前
+  # (轴交换+断轴之后的)d上算出来的候选下标——顶层传的4个threshold汇总成
+  # selection_spec，既用来给非inset路径收窄badge候选池，也是.normalize_
+  # inset_configs()里"没传inset_configs时"的默认filter(单inset场景下
+  # 跟改动前"5个filter全部裁剪d"的最终候选集完全一致，只是主图本身不再
+  # 跟着收窄)。
+  selection_spec <- .selection_filter_spec(
+    dispersion = dispersion_threshold, dispersion_op = dispersion_threshold_op,
+    node_dispersion = node_dispersion_threshold, node_dispersion_op = node_dispersion_threshold_op,
+    frequency = frequency_threshold, frequency_op = frequency_threshold_op,
+    node_frequency = node_frequency_threshold, node_frequency_op = node_frequency_threshold_op
+  )
+  cand_idx <- .selection_filter_idx(d, selection_spec)
   colors <- .compute_point_colors(d, highlight, highlight_pairs, annotate_point_exclude,
-                                   highlight_frontier, frontier_n)
+                                   highlight_frontier, frontier_n, frontier_candidate_idx = cand_idx)
   d$point_col <- colors$point_col
   # 存成d的一列而不是独立变量，让它跟着d一起被badge_rows/dd这些子集操作
   # 自动带过去，不用在每处子集代码另外重新计算
   d$point_pch <- compute_point_shapes(d, point_field)
+
+  if (inset) {
+    configs <- .normalize_inset_configs(inset_configs, inset_position, frontier_n, selection_spec)
+    bundles <- .resolve_inset_bundles(d, configs, ranges, inset_pad_frac,
+                                       annotate_words, label_top_n, neutral,
+                                       annotate_nontarget_only, annotate_point_exclude,
+                                       badge_selection, aggregate_locators, annotate_pairs)
+    # The table-tab's "currently annotated points" output -- union of every
+    # bundle's tie_box_rows (multi-config: a point annotated by ANY inset
+    # counts), joined back to the pre-overwrite snapshot (see .row_id's own
+    # comment above) so callers see the real tsv columns.
+    annotated_ids <- unique(unlist(lapply(bundles, function(b) b$tie_box_rows$.row_id)))
+    annotated_table <- d_raw_cols[d_raw_cols$.row_id %in% annotated_ids, , drop = FALSE]
+    annotated_table$.row_id <- NULL
+    annotated_table <- .format_display_columns(annotated_table)
+    .render_with_insets(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
+                         axis_label, point_label, value_label, not_value_label,
+                         default_label, badge_selection, badge_layout,
+                         canvas_size, inset_border_col,
+                         max_group_members = max_group_members,
+                         network_scale = network_scale,
+                         network_node_gap = network_node_gap,
+                         zoom_annotated_only = zoom_annotated_only,
+                         repel_annotated_only = repel_annotated_only,
+                         kld_variant = kld_variant)
+    cat(output, ":", nrow(d), point_label, "points\n")
+    return(invisible(annotated_table))
+  }
+
+  # 非inset路径：badge候选池收窄到cand_idx(跟inset路径的"默认单config"
+  # 用同一份selection_spec)，但主图本身(下面的points())画的仍然是完整的
+  # d，不受这4种filter影响——跟inset路径同一个"只选不删"原则。
+  d_cand <- d[cand_idx, ]
   # badge_rows的选取逻辑不管inset开不开都一样，只是inset=TRUE时它还多了
   # 一个用途(决定放大范围)——提到if/else分支之前算一次，两边共用
-  badge_rows <- select_badges(d, annotate_words, label_top_n, neutral,
+  badge_rows <- select_badges(d_cand, annotate_words, label_top_n, neutral,
                                annotate_nontarget_only, annotate_point_exclude,
-                               badge_selection, frontier_n, zoom_box, aggregate_locators,
+                               badge_selection, frontier_n, aggregate_locators,
                                annotate_pairs = annotate_pairs)
   # aggregate_locators=TRUEの時、badge_rowsは既に(n_target, n_not_target,
   # kind)で1行にまとめられた後(.aggregate_locator_groups)なので、表
@@ -1986,9 +2084,9 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   # 1つしか出てこなくなる)。aggregate_locators=FALSEで同じselect_badges
   # をもう一度呼び、集約前の個々の点(「annotateされた点」ではあるが、
   # まだ合算されていない実際の座標を持つ行)を別に用意する。
-  tie_box_rows <- select_badges(d, annotate_words, label_top_n, neutral,
+  tie_box_rows <- select_badges(d_cand, annotate_words, label_top_n, neutral,
                                  annotate_nontarget_only, annotate_point_exclude,
-                                 badge_selection, frontier_n, zoom_box,
+                                 badge_selection, frontier_n,
                                  aggregate_locators = FALSE,
                                  annotate_pairs = annotate_pairs)
   # The table-tab's "currently annotated points" output -- same row set as
@@ -1997,22 +2095,6 @@ draw_point_vs_target <- function(input, output, point_label = "point",
   annotated_table <- d_raw_cols[d_raw_cols$.row_id %in% tie_box_rows$.row_id, , drop = FALSE]
   annotated_table$.row_id <- NULL
   annotated_table <- .format_display_columns(annotated_table)
-
-  if (inset) {
-    .render_with_inset(d, badge_rows, tie_box_rows, colors, output, ranges, breaks, neutral, nofreq,
-                        axis_label, point_label, value_label, not_value_label,
-                        default_label, badge_selection, badge_layout,
-                        canvas_size, inset_border_col, inset_pad_frac,
-                        inset_position = inset_position,
-                        zoom_box = zoom_box, max_group_members = max_group_members,
-                        network_scale = network_scale,
-                        network_node_gap = network_node_gap,
-                        zoom_annotated_only = zoom_annotated_only,
-                        repel_annotated_only = repel_annotated_only,
-                        kld_variant = kld_variant)
-    cat(output, ":", nrow(d), point_label, "points\n")
-    return(invisible(annotated_table))
-  }
 
   .open_canvas(output, canvas_size)
   on.exit(dev.off())
@@ -2084,9 +2166,19 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 
 # 主图里标出"这块被放大了"的框：虚线(跟已有neutral/median参考线的线型
 # 区分开)，只占主图的一小块区域，所以用rect()在data坐标里手画。
-.draw_source_box <- function(box, border_col) {
-  rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = "1343",
+# label/lty是多inset config新增的两个可选参数(2026-11-07)：label非NULL时
+# 在框的左上角外侧标一个字母(A/B/C...)，跟对应放大框里的.draw_inset_header
+# 用同一个字母呼应；多个config的框经常互相嵌套(比如5档门槛由松到紧，
+# 紧的那个框几乎总是落在松的那个框内部)，光靠颜色/字母不够一眼分开，
+# 额外让每个config轮换不同的虚线样式(LTY，默认仍是"1343"跟原来一样)。
+# label=NULL(单config/旧用法)时完全不画字母，跟改动前逐像素一致。
+.draw_source_box <- function(box, border_col, label = NULL, lty = "1343") {
+  rect(box$x1, box$y1, box$x2, box$y2, border = border_col, lty = lty,
        lwd = 1.2, xpd = NA)
+  if (!is.null(label) && nzchar(label)) {
+    text(box$x1, box$y2, labels = label, adj = c(1.2, -0.3), xpd = NA,
+         col = border_col, font = 2, cex = 0.8)
+  }
 }
 
 # 源框(主图里，标出被放大的区域)、目标框(放大图本身的绘图区)四个角一一
@@ -2117,18 +2209,28 @@ draw_point_vs_target <- function(input, output, point_label = "point",
 }
 
 # ---- inset下半：主图(不画badge，只标出被放大的区域) ----
+# ZBOXES/BOX_LABELS/BOX_LTYS是跟bundles同一个顺序的三份平行向量/list——
+# 一个bundle一个框，都画在同一张主图上(2026-11-07从单一zbox扩展成多个，
+# 支持一张图里同时标出多个inset各自对应的取景范围)。src_ndc_x/y相应地
+# 变成list(每个元素是该bundle自己框的NDC坐标)，单config(legacy)时就是
+# 长度1的list，调用方(.render_with_insets)取[[1]]用。
 render_inset_source_panel <- function(d, ranges, nofreq, axis_label, point_label, breaks,
-                                       zbox, inset_border_col, value_label, not_value_label,
-                                       colors, default_label, kld_variant = NULL) {
+                                       zboxes, inset_border_col, value_label, not_value_label,
+                                       colors, default_label, kld_variant = NULL,
+                                       box_labels, box_ltys) {
   .draw_axes(d, ranges, nofreq, axis_label, point_label, breaks$x_break, breaks$y_break,
              kld_variant = kld_variant)
   points(d$frequency, d$keyness, pch = d$point_pch,
          cex = .size_scale(d$node_size), col = d$point_col)
-  .draw_source_box(zbox, inset_border_col)
-  # 必须趁现在(还没切换par(fig=)去画上半之前)算好NDC，晚了的话下半的
-  # par("usr")就不再是"当前"绘图区的坐标系了
-  src_ndc_x <- grconvertX(c(zbox$x1, zbox$x2), from = "user", to = "ndc")
-  src_ndc_y <- grconvertY(c(zbox$y1, zbox$y2), from = "user", to = "ndc")
+  # 必须趁现在(还没切换par(fig=)去画其它面板之前)算好NDC，晚了的话其它
+  # 面板的par("usr")就不再是"当前"绘图区的坐标系了
+  src_ndc_x <- vector("list", length(zboxes))
+  src_ndc_y <- vector("list", length(zboxes))
+  for (i in seq_along(zboxes)) {
+    .draw_source_box(zboxes[[i]], inset_border_col, label = box_labels[i], lty = box_ltys[i])
+    src_ndc_x[[i]] <- grconvertX(c(zboxes[[i]]$x1, zboxes[[i]]$x2), from = "user", to = "ndc")
+    src_ndc_y[[i]] <- grconvertY(c(zboxes[[i]]$y1, zboxes[[i]]$y2), from = "user", to = "ndc")
+  }
   pc <- panel_coord_converters()
   .draw_axis_direction_arrows(value_label, not_value_label)
   .draw_size_legend(d$node_size, pc$pin, pc$in_to_data_x, pc$in_to_data_y,
@@ -2243,137 +2345,244 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
        in_to_data_x = pc$in_to_data_x, in_to_data_y = pc$in_to_data_y, pin = pc$pin)
 }
 
-# 主图/放大图两块正方形panel各自的fig区间+画布该往哪个方向翻倍——
-# width_multiplier=2时画布整体加宽(左右分栏)，height_multiplier=2时画布
-# 整体加高(上下叠放)，两者互斥(每次只翻一个方向，另一个方向保持1倍，
-# 两块panel永远是正方形，不会因为翻倍方向不同就被拉伸变形)。"top"是
-# 2026-09-21就有的默认布局("扩大图改为放在上方")，width_multiplier这个
-# 参数当时就是为了给"left/right"这类以后可能要支持的方向预留的(见
-# .open_canvas自己的注释"width_multiplier保留但目前没有调用方在用")，
-# 2026-09-29正式用上，加了"bottom"/"left"/"right"三个新方向(用户要求
-# "可以调整放大框放在主图的上下左右")。
+# 3x3罗盘网格，中心格(2,2)固定留给主图，8个外围格子是合法的inset位置
+# (2026-11-07从原来只有top/bottom/left/right四个switch分支扩展成网格，
+# 为了让top_right/bottom_right/top_left/bottom_left这几个真正的"角落"
+# 位置可以表示——.open_canvas本身width_multiplier/height_multiplier两个
+# 参数其实互相独立，可以同时>1，之前只是没有调用方同时用到两个)。
+# col/row都是1~3，(1,*)=左/下，(3,*)=右/上。
+.INSET_GRID_CELLS <- list(
+  top_left = c(col = 1, row = 3), top = c(col = 2, row = 3), top_right = c(col = 3, row = 3),
+  left     = c(col = 1, row = 2),                            right     = c(col = 3, row = 2),
+  bottom_left = c(col = 1, row = 1), bottom = c(col = 2, row = 1), bottom_right = c(col = 3, row = 1)
+)
+
+# POSITIONS：一个或多个方位名(每个inset config各自的inset_position)。
+# 取{中心格} ∪ POSITIONS这些格子实际用到的列/行集合，压缩成最小的子网格
+# (只使用到的列重新编号成1..nc、行重新编号成1..nr)——单个方位时这步压缩
+# 正好退化成原来4个case各自的2格布局(见下面的回归验证)，不会因为改成
+# 网格通用实现就产生任何像素差异。width_multiplier=nc/height_multiplier=nr，
+# 保证不管用了几列/几行，每个格子都还是边长canvas_size的正方形(跟
+# .open_canvas自己的约定一致)。重复的方位/未知方位名都是调用方的错误，
+# 直接stop()，不静默合并或忽略。
+.inset_grid_layout <- function(positions) {
+  if (length(positions) != length(unique(positions))) {
+    stop("inset_configs里有重复的inset_position: ", paste(positions, collapse = ", "))
+  }
+  unknown <- setdiff(positions, names(.INSET_GRID_CELLS))
+  if (length(unknown) > 0) {
+    stop("inset_position必须是以下之一: ", paste(names(.INSET_GRID_CELLS), collapse = "/"),
+         "，收到未知值: ", paste(unknown, collapse = ", "))
+  }
+  cells <- .INSET_GRID_CELLS[positions]
+  used_cols <- sort(unique(c(2, vapply(cells, `[[`, numeric(1), "col"))))
+  used_rows <- sort(unique(c(2, vapply(cells, `[[`, numeric(1), "row"))))
+  col_idx <- setNames(seq_along(used_cols), used_cols)
+  row_idx <- setNames(seq_along(used_rows), used_rows)
+  nc <- length(used_cols); nr <- length(used_rows)
+  cell_fig <- function(col, row) {
+    c1 <- col_idx[[as.character(col)]]; r1 <- row_idx[[as.character(row)]]
+    c((c1 - 1) / nc, c1 / nc, (r1 - 1) / nr, r1 / nr)
+  }
+  main <- cell_fig(2, 2)
+  insets <- lapply(cells, function(cell) cell_fig(cell["col"], cell["row"]))
+  list(main = main, insets = insets, width_multiplier = nc, height_multiplier = nr)
+}
+
+# 向后兼容：单个位置的薄封装，供.render_with_inset()(单bundle legacy路径)
+# 以及其它可能的直接调用方使用。跟原来4个switch分支数值上逐一核对过完全
+# 一致(top: main=0,1,0,0.5/inset=0,1,0.5,1；bottom反过来；left: main=0.5,1,0,1/
+# inset=0,0.5,0,1；right反过来)。
 .inset_fig_regions <- function(inset_position) {
-  switch(inset_position,
-    top = list(main = c(0, 1, 0, 0.5), inset = c(0, 1, 0.5, 1),
-               width_multiplier = 1, height_multiplier = 2),
-    bottom = list(main = c(0, 1, 0.5, 1), inset = c(0, 1, 0, 0.5),
-                  width_multiplier = 1, height_multiplier = 2),
-    left = list(main = c(0.5, 1, 0, 1), inset = c(0, 0.5, 0, 1),
-                width_multiplier = 2, height_multiplier = 1),
-    right = list(main = c(0, 0.5, 0, 1), inset = c(0.5, 1, 0, 1),
-                 width_multiplier = 2, height_multiplier = 1),
-    stop("inset_position must be one of top/bottom/left/right, got: ", inset_position)
-  )
+  lay <- .inset_grid_layout(inset_position)
+  list(main = lay$main, inset = lay$insets[[1]],
+       width_multiplier = lay$width_multiplier, height_multiplier = lay$height_multiplier)
+}
+
+# inset_configs(调用方传的原始list，可能是NULL)+旧式标量参数(inset_
+# position/frontier_n) -> 一份"每个inset面板各自的完整配置"列表，每项
+# 含label(多config时A/B/C...，单config时空字符串、不画字母)、
+# inset_position、frontier_n、filters(.selection_filter_spec()形状的
+# spec)。没传inset_configs时(旧用法)包成长度为1的list、filters用顶层
+# 的selection_spec——这样渲染出来的候选集跟改动前"5个filter全部裁剪d"
+# 算出来的最终候选集完全一致(见draw_point_vs_target()调用处的注释)，
+# 只是主图本身不再跟着收窄。
+.normalize_inset_configs <- function(configs, inset_position, frontier_n, selection_spec) {
+  if (is.null(configs) || length(configs) == 0) {
+    return(list(list(label = "", inset_position = inset_position, frontier_n = frontier_n,
+                      filters = selection_spec)))
+  }
+  n <- length(configs)
+  labels <- if (n == 1) "" else LETTERS[seq_len(n)]
+  lapply(seq_len(n), function(i) {
+    cfg <- configs[[i]]
+    pos <- cfg$inset_position; if (is.null(pos)) pos <- inset_position
+    fn <- cfg$frontier_n; if (is.null(fn)) fn <- frontier_n
+    filt <- cfg$filters; if (is.null(filt)) filt <- selection_spec
+    list(label = labels[i], inset_position = pos, frontier_n = fn, filters = filt)
+  })
+}
+
+# 把.normalize_inset_configs()产出的每个config，变成渲染一个inset面板
+# 需要的全部素材：该config自己的候选子集(d_eligible，用filters在D上
+# 再选一次，跟顶层cand_idx完全独立——每个config可以有自己的dispersion/
+# frequency组合，互不影响)、badge_rows/tie_box_rows(在d_eligible上重新
+# 跑select_badges，参数跟非inset路径一致)、zbox(从tie_box_rows的外接框
+# 算，跟改动前.render_with_inset()同一个算法)、desc(一行人类可读的
+# filter描述，画在放大框上方，见.inset_filter_desc)。某个config筛完
+# 候选池是空的时候直接stop()并带上它的字母，不悄悄跳过或画一个空面板——
+# 空面板会在.compute_zoom_box()里对空向量取range()，产生跟"全部filter
+# 筛空d"同样的"Inf/-Inf"式隐晦报错，不如在这里提前说清楚是哪个inset。
+.resolve_inset_bundles <- function(d, configs, ranges, inset_pad_frac,
+                                    annotate_words, label_top_n, neutral,
+                                    annotate_nontarget_only, annotate_point_exclude,
+                                    badge_selection, aggregate_locators, annotate_pairs) {
+  lapply(configs, function(cfg) {
+    cand_idx <- .selection_filter_idx(d, cfg$filters)
+    if (length(cand_idx) == 0) {
+      stop(sprintf("inset%s: 这个config的filter把候选池筛空了，没有点可以画放大图",
+                    if (nzchar(cfg$label)) paste0(" ", cfg$label) else ""))
+    }
+    d_eligible <- d[cand_idx, ]
+    badge_rows <- select_badges(d_eligible, annotate_words, label_top_n, neutral,
+                                 annotate_nontarget_only, annotate_point_exclude,
+                                 badge_selection, cfg$frontier_n, aggregate_locators,
+                                 annotate_pairs = annotate_pairs)
+    tie_box_rows <- select_badges(d_eligible, annotate_words, label_top_n, neutral,
+                                   annotate_nontarget_only, annotate_point_exclude,
+                                   badge_selection, cfg$frontier_n, aggregate_locators = FALSE,
+                                   annotate_pairs = annotate_pairs)
+    zbox <- .compute_zoom_box(tie_box_rows, ranges, inset_pad_frac)
+    list(label = cfg$label, inset_position = cfg$inset_position, frontier_n = cfg$frontier_n,
+         desc = .inset_filter_desc(cfg$filters), d_eligible = d_eligible,
+         badge_rows = badge_rows, tie_box_rows = tie_box_rows, zbox = zbox)
+  })
+}
+
+# badge_rows里所有候选汇总起来是否只对应一个locator(n_target/n_not_target
+# 完全相同、同一种pair组合field1+field2)——这种情况下"放大图"要整块换成
+# 网络图(见render_network_glyph_panel)，不画独立坐标轴的散点面板。
+.is_single_locator <- function(badge_rows) {
+  is_pair <- !is.null(badge_rows$w1)
+  if (!is_pair || nrow(badge_rows) == 0) return(FALSE)
+  kind <- if (!is.null(badge_rows$field1)) paste(badge_rows$field1, badge_rows$field2, sep = "|") else ""
+  key <- paste(badge_rows$n_target, badge_rows$n_not_target, kind, sep = "\t")
+  length(unique(key)) == 1
+}
+
+# 放大框上方一行文字："A: 分散度 ≥ 0.1"这样，字母+filter描述。用
+# mtext(side=3)相对"当前panel自己的坐标系"画，散点面板/网络图面板
+# (两者坐标系含义完全不同)都适用，不需要额外的坐标换算。
+.draw_inset_header <- function(label, desc, col, cex = 0.75,
+                                fam = getOption("kld.plot.font_family", "Hiragino Mincho ProN")) {
+  txt <- if (nzchar(label)) sprintf("%s: %s", label, desc) else desc
+  mtext(txt, side = 3, line = 0.3, adj = 0, cex = cex, col = col, family = fam)
 }
 
 # inset=TRUE的完整渲染路径，跟非inset路径(draw_point_vs_target主体)完全
-# 独立，互不影响。.inset_fig_regions()按inset_position算出画布该往哪个
-# 方向翻倍、主图/放大图各自的fig区间，分别调用.draw_axes——每一半单独看，
-# 跟一张普通的(非inset)图用同一套margin/字号，视觉上完全一致。校准标记/
-# 投影线/网络图svg拼接这几处都只读"当前panel自己的坐标系"(par("usr")/
-# par("pin")这类)，不假设主图在下还是放大图在上，inset_position换方向
-# 不需要改这几处。
-.render_with_inset <- function(d, badge_rows, tie_box_rows, colors, output, ranges, breaks, neutral, nofreq,
+# 独立，互不影响。.inset_grid_layout()按每个bundle的inset_position算出
+# 画布该用几列几行、主图/各放大图各自的fig区间，分别调用.draw_axes——
+# 每一块单独看，跟一张普通的(非inset)图用同一套margin/字号，视觉上完全
+# 一致。校准标记/投影线/网络图拼接这几处都只读"当前panel自己的坐标系"
+# (par("usr")/par("pin")这类)，不假设主图在哪、放大图在哪，inset_position
+# 换方向不需要改这几处。
+#
+# BUNDLES是.resolve_inset_bundles()产出的list，长度>=1；长度1时就是原来
+# 单inset的legacy路径(bundles[[1]]$label==""，不画字母/filter说明以外的
+# 任何额外元素，投影虚线正常画)。长度>1时：每个bundle在主图上有自己的
+# 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)，任一bundle
+# 退化成single_locator(网络图面板)直接stop()——igraph渲染路径本身对多个
+# 网络图面板没有main-repo那种SVG校准标记限制，但为了跟main-repo的行为
+# 保持一致、避免用户在两个仓库之间得到不同的报错/成功结果，这里同样拒绝。
+.render_with_insets <- function(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
                                  axis_label, point_label, value_label, not_value_label,
                                  default_label, badge_selection, badge_layout,
-                                 canvas_size, inset_border_col, inset_pad_frac,
-                                 inset_position = "top",
-                                 zoom_box = NULL, max_group_members = 50, network_scale = 0.01,
+                                 canvas_size, inset_border_col,
+                                 max_group_members = 50, network_scale = 0.01,
                                  network_node_gap = 1,
                                  zoom_annotated_only = FALSE, repel_annotated_only = FALSE,
                                  kld_variant = NULL) {
-  # colors/d$point_col由调用方(draw_point_vs_target)在选badge_rows之前
-  # 算好、传进来——不在这里重算，badge_rows本身就是d的一份快照，如果这里
-  # 重算一次d$point_col，也补救不了badge_rows早就没有这一列的事实
-  # (2026-09-15修的bug，见调用方那边的注释)。
-  # 局部变量不能叫box——base R自己有个同名的box()函数(画四条边的框，
-  # 下面上半就用得到)，叫box会把那个函数遮蔽掉
-  # ZOOM_BOX给了就直接用调用方指定的取景范围(比如"y>1,x>0"这种手动划定
-  # 的区域，2026-09-19需求)，不再从badge_rows的外接框自动算——手动指定的
-  # 范围本身已经是完整区间，不需要.compute_zoom_box那套"退化维度找最小
-  # 宽度兜底"的处理(那是自动算badge外接框时才会遇到的问题)。
-  # badge_rows(aggregate_locators=TRUEの時は集約済み)ではなく、必ず
-  # 集約前のtie_box_rowsを渡す -- 同じ(n_target, n_not_target, kind)に
-  # 束ねられたグループは代表行1つの座標しか持たないため、badge_rowsを
-  # 渡すとグループ内の他メンバー(色は塗られているが代表行より低い
-  # dispersionを持つ点)がこの外接矩形の計算から漏れる(2026-10-19
-  # ユーザー報告:"有些低dispersion的词被标红了，当时没有被框起来")。
-  # tie_box_rowsは表タブ用に同じ理由で既に非集約のまま渡されている
-  # (draw_point_vs_target側のコメント参照) -- ここも同じ原則に揃える。
-  zbox <- if (!is.null(zoom_box)) zoom_box else .compute_zoom_box(tie_box_rows, ranges, inset_pad_frac)
-
-  # 扩大图范围里所有候选badge点(不管聚不聚合、不管是不是同一组)汇总起来
-  # 是不是只对应一个locator(n_target/n_not_target完全相同，且是同一种pair
-  # 组合field1+field2——不同种类不算同一个locator，见.aggregate_locator_
-  # groups()同一处注释，2026-09-23"badge 不同种类的pair和condition保持不
-  # 聚合")——这种极端情况下"多个badge摆在坐标轴上各自找空位"已经没有意义
-  # (反正只有一个点、一个坐标)，改成整个上半面板直接画一张网络图，不画
-  # 坐标轴、只留一个框(用户2026-09-22要求)。aggregate_locators=TRUE时同一
-  # locator+同一种类的多行早就被.aggregate_locator_groups()合并成1行了，
-  # 这时nrow(badge_rows)==1本身就等价于这个判断；FALSE时badge_rows可能还是
-  # 好几行(都是同一个locator+种类没合并)，所以统一按locator+kind去重之后
-  # 数unique值，不直接判nrow==1。
-  is_pair <- !is.null(badge_rows$w1)
-  locator_kind_key <- function(rows) {
-    kind <- if (!is.null(rows$field1)) paste(rows$field1, rows$field2, sep = "|") else ""
-    paste(rows$n_target, rows$n_not_target, kind, sep = "\t")
+  multi <- length(bundles) > 1
+  single_locator_flags <- vapply(bundles, function(b) .is_single_locator(b$badge_rows), logical(1))
+  if (multi && any(single_locator_flags)) {
+    bad_labels <- vapply(bundles[single_locator_flags], `[[`, "", "label")
+    stop("多个inset同时渲染时，不支持某个config的候选点全部落在同一个locator、",
+         "退化成网络图(字母: ", paste(bad_labels, collapse = ", "),
+         ")——请调整该config的filter/frontier_n，或改成只渲染一个inset")
   }
-  single_locator <- is_pair && nrow(badge_rows) > 0 &&
-    length(unique(locator_kind_key(badge_rows))) == 1
 
-  regions <- .inset_fig_regions(inset_position)
-  .open_canvas(output, canvas_size, width_multiplier = regions$width_multiplier,
-               height_multiplier = regions$height_multiplier)
+  positions <- vapply(bundles, `[[`, "", "inset_position")
+  lay <- .inset_grid_layout(positions)
+  canvas <- .open_canvas(output, canvas_size, width_multiplier = lay$width_multiplier,
+                          height_multiplier = lay$height_multiplier)
   # 跟draw_point_vs_target()非inset路径同一个理由：正常情况由下面显式的
   # dev.off()关闭设备，splice_ok只是避免on.exit兜底再关一次已经关掉的设备
   splice_ok <- FALSE
   on.exit(if (!splice_ok) dev.off())
 
-  # 两块正方形panel各占设备翻倍那个方向总长度的一半，具体谁在哪一半由
-  # regions$main/regions$inset(即inset_position)决定。
-  # 主图：不画badge，只画虚线框标出被放大的区域
-  par(fig = regions$main)
+  par(fig = lay$main)
+  zboxes <- lapply(bundles, `[[`, "zbox")
+  box_labels <- vapply(bundles, `[[`, "", "label")
+  # 多个框经常互相嵌套(比如阈值由松到紧，紧的那个几乎总落在松的那个
+  # 框内部)，轮换虚线样式让它们在视觉上也能分开，不是只靠字母——单config
+  # 时box_ltys只有一个元素、取lty_cycle[1]，跟改动前的"1343"一模一样。
+  lty_cycle <- c("1343", "2262", "4212", "73", "13")
+  box_ltys <- lty_cycle[(seq_along(zboxes) - 1) %% length(lty_cycle) + 1]
   source_panel <- render_inset_source_panel(d, ranges, nofreq, axis_label, point_label, breaks,
-                                             zbox, inset_border_col, value_label, not_value_label,
-                                             colors, default_label, kld_variant = kld_variant)
+                                             zboxes, inset_border_col, value_label, not_value_label,
+                                             colors, default_label, kld_variant = kld_variant,
+                                             box_labels = box_labels, box_ltys = box_ltys)
 
-  # 放大图：正常情况下是独立的完整坐标轴+badge；single_locator时整块
-  # 面板换成一张网络图(用户2026-09-22要求"这个网络图不要坐标轴，只需要一个
-  # 框")。坐标轴/框都用inset_border_col(红)而不是默认黑色(2026-09-15确认
-  # "轴上的标度改为红色")。
-  par(fig = regions$inset, new = TRUE)
-
-  panel <- if (single_locator) {
-    render_network_glyph_panel(badge_rows, inset_border_col, value_label, not_value_label,
-                                network_scale, network_node_gap)
-  } else {
-    render_zoomed_scatter_panel(d, badge_rows, tie_box_rows, zbox, ranges, nofreq, axis_label, point_label,
-                                 inset_border_col, badge_selection, badge_layout,
-                                 value_label, not_value_label, neutral, max_group_members,
-                                 zoom_annotated_only = zoom_annotated_only,
-                                 repel_annotated_only = repel_annotated_only,
-                                 kld_variant = kld_variant)
+  all_pending <- list()
+  all_marks_in <- NULL
+  single_dest_ndc_x <- NULL
+  single_dest_ndc_y <- NULL
+  for (i in seq_along(bundles)) {
+    b <- bundles[[i]]
+    par(fig = lay$insets[[i]], new = TRUE)
+    # 放大框上方要留出.draw_inset_header()那一行文字的空间——只在multi
+    # (多config)时才需要：.open_canvas默认只留1行顶边距，legacy单inset
+    # 场景(multi==FALSE)完全不画字母/filter说明，保持margin跟改动前一样。
+    if (multi) {
+      inset_mar <- c(5.0, 5.0, 2.6, 1) * canvas$canvas_scale
+      old_mar <- par(mar = inset_mar)
+    }
+    panel <- if (single_locator_flags[i]) {
+      render_network_glyph_panel(b$badge_rows, inset_border_col, value_label, not_value_label,
+                                  network_scale, network_node_gap)
+    } else {
+      render_zoomed_scatter_panel(b$d_eligible, b$badge_rows, b$tie_box_rows, b$zbox, ranges, nofreq,
+                                   axis_label, point_label, inset_border_col, badge_selection, badge_layout,
+                                   value_label, not_value_label, neutral, max_group_members,
+                                   zoom_annotated_only = zoom_annotated_only,
+                                   repel_annotated_only = repel_annotated_only,
+                                   kld_variant = kld_variant)
+    }
+    if (multi) {
+      .draw_inset_header(b$label, b$desc, inset_border_col)
+      par(old_mar)
+    }
+    if (length(panel$pending) > 0) {
+      all_pending <- c(all_pending, panel$pending)
+      all_marks_in <- .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
+    }
+    if (!multi) {
+      single_dest_ndc_x <- panel$dest_ndc_x
+      single_dest_ndc_y <- panel$dest_ndc_y
+    }
   }
-  pending <- panel$pending
 
-  # 校准标记要在.draw_projection_lines()之前画——那个函数会把par(fig=)切到
-  # 覆盖整个设备的[0,1]全画布叠加层(画src/dest两个框四角的连线用)，画完
-  # 之后"当前绘图区"就不再是上半这块面板了，panel$in_to_data_x/y这两个闭包
-  # 虽然算出来的还是上半坐标系下的正确数值，但rect()会拿这个数值去套用
-  # "当前"那个[0,1]叠加层的坐标系，位置整个错掉(2026-09-21用真实数据跑出来
-  # 的bug："找不到svg校准标记")。校准标记必须在上半坐标系还是"当前"绘图区
-  # 时画完。
-  marks_in <- if (length(pending) > 0) {
-    .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
-  } else NULL
-
-  .draw_projection_lines(source_panel$src_ndc_x, source_panel$src_ndc_y,
-                          panel$dest_ndc_x, panel$dest_ndc_y, inset_border_col)
+  # 多config时不画投影虚线(多组线交叉太乱，主图上的字母+指示框已经起到
+  # 同样的"这块对应哪个放大图"的作用)；单config时跟改动前完全一样画一条
+  if (!multi) {
+    .draw_projection_lines(source_panel$src_ndc_x[[1]], source_panel$src_ndc_y[[1]],
+                            single_dest_ndc_x, single_dest_ndc_y, inset_border_col)
+  }
 
   dev.off()
   splice_ok <- TRUE
-  if (length(pending) > 0) {
-    .splice_network_glyphs(output, pending, marks_in)
+  if (length(all_pending) > 0) {
+    .splice_network_glyphs(output, all_pending, all_marks_in)
   }
 }
 
@@ -2395,10 +2604,66 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 # 道理(app.R自己注释里也有这段解释)。OUTPUT单独传是因为两个调用方对它
 # 的处理不一样：CLI入口直接读args[["output"]]；app.R的cmdline模式会
 # 用自己的tempfile覆盖掉(不管用户粘贴的命令里写了什么output=)。
+# CLI用扁平化的带下标key表示一组inset config——没有新引入任何分隔符
+# 语法，跟现有的"inset_position=top"这类key=value token完全同构
+# (.kv_pairs()本身一行strsplit(tokens,"=")就能继续用，不用改)，这是刻意
+# 的取舍：这个项目的既有约定是整条Rscript命令能直接复制粘贴进shell(见
+# draft.org里每张图正上方那行"# Rscript ...")，任何用"|"/";"这类shell
+# 元字符分隔多个config的写法，都会让"复制粘贴"这条路径变得需要转义，
+# 静悄悄地破坏掉这个约定。
+# 格式：inset<N>_<子key>=<值>，子key跟顶层参数同名——inset_position、
+# frontier_n，以及5种filter各自的"<type>_threshold"/"<type>_threshold_op"
+# (type取edge/dispersion/node_dispersion/frequency/node_frequency)。比如
+# 画5个阈值各一个放大框：
+#   inset1_inset_position=top          inset1_frontier_n=10
+#   inset2_inset_position=top_right    inset2_frontier_n=10 inset2_edge_threshold=0.01
+#   ...
+# 按下标分组、数值排序、从1重新紧凑编号(只给inset1_/inset3_时，视为长度
+# 2、标签仍是A/B，不因为中间空了inset2_而出错或留空档)——这样手动删掉
+# 中间某一段config、或者从其它命令里东拼西凑几段，都还能正常解析。没有
+# 任何inset<N>_*key时返回NULL，交给.normalize_inset_configs()的legacy
+# 单config分支处理。
+.inset_configs_from_args <- function(args) {
+  keys <- names(args)
+  m <- regmatches(keys, regexec("^inset([0-9]+)_(.+)$", keys))
+  has_match <- vapply(m, function(x) length(x) == 3, logical(1))
+  if (!any(has_match)) return(NULL)
+  idx_num <- as.integer(vapply(m[has_match], `[`, "", 2))
+  sub_keys <- vapply(m[has_match], `[`, "", 3)
+  vals <- unname(args[has_match])
+  by_idx <- split(seq_along(idx_num), idx_num)
+  group_order <- names(by_idx)[order(as.integer(names(by_idx)))]
+  lapply(group_order, function(gi) {
+    rows <- by_idx[[gi]]
+    get1 <- function(name) {
+      hit <- which(sub_keys[rows] == name)
+      if (length(hit) == 0) NULL else vals[rows][hit[1]]
+    }
+    filt_val <- function(type) {
+      v <- get1(paste0(type, "_threshold")); if (is.null(v)) NULL else as.numeric(v)
+    }
+    filt_op <- function(type) {
+      v <- get1(paste0(type, "_threshold_op")); if (is.null(v)) "gte" else v
+    }
+    list(
+      inset_position = get1("inset_position"),
+      frontier_n = { v <- get1("frontier_n"); if (is.null(v)) NULL else as.numeric(v) },
+      filters = .selection_filter_spec(
+        edge = filt_val("edge"), edge_op = filt_op("edge"),
+        dispersion = filt_val("dispersion"), dispersion_op = filt_op("dispersion"),
+        node_dispersion = filt_val("node_dispersion"), node_dispersion_op = filt_op("node_dispersion"),
+        frequency = filt_val("frequency"), frequency_op = filt_op("frequency"),
+        node_frequency = filt_val("node_frequency"), node_frequency_op = filt_op("node_frequency")
+      )
+    )
+  })
+}
+
 .draw_point_vs_target_args <- function(args, output = args[["output"]]) {
   .arg <- function(name, default = NULL) {
     if (name %in% names(args)) args[[name]] else default
   }
+  inset_configs <- .inset_configs_from_args(args)
   list(
     input = args[["input"]], output = output,
     point_label = .arg("point_label", "point"),
@@ -2419,20 +2684,22 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
     default_label = .arg("default_label", .arg("point_label", "point")),
     badge_selection = .arg("badge_selection", "words"),
     frontier_n = as.numeric(.arg("frontier_n", "15")),
-    inset = tolower(.arg("inset", "false")) == "true",
+    inset = tolower(.arg("inset", "false")) == "true" || !is.null(inset_configs),
     inset_position = .arg("inset_position", "top"),
+    inset_configs = inset_configs,
     inset_pad_frac = as.numeric(.arg("inset_pad_frac", "0.15")),
     zoom_annotated_only = tolower(.arg("zoom_annotated_only", "false")) == "true",
     repel_annotated_only = tolower(.arg("repel_annotated_only", "false")) == "true",
-    zoom_x1 = .arg("zoom_x1"),
-    zoom_x2 = .arg("zoom_x2"),
-    zoom_y1 = .arg("zoom_y1"),
-    zoom_y2 = .arg("zoom_y2"),
     edge_threshold = .arg("edge_threshold"),
+    edge_threshold_op = .arg("edge_threshold_op", "gte"),
     dispersion_threshold = .arg("dispersion_threshold"),
+    dispersion_threshold_op = .arg("dispersion_threshold_op", "gte"),
     node_dispersion_threshold = .arg("node_dispersion_threshold"),
+    node_dispersion_threshold_op = .arg("node_dispersion_threshold_op", "gte"),
     frequency_threshold = .arg("frequency_threshold"),
+    frequency_threshold_op = .arg("frequency_threshold_op", "gte"),
     node_frequency_threshold = .arg("node_frequency_threshold"),
+    node_frequency_threshold_op = .arg("node_frequency_threshold_op", "gte"),
     aggregate_locators = tolower(.arg("aggregate_locators", "true")) == "true",
     max_group_members = as.numeric(.arg("max_group_members", "50")),
     network_scale = as.numeric(.arg("network_scale", "0.01")),

@@ -176,6 +176,8 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
     if (!is.na(v)) {
       updateCheckboxInput(session, paste0("enable_", id), value = TRUE)
       updateNumericInput(session, id, value = v)
+      op <- .get(paste0(id, "_op"))
+      updateSelectInput(session, paste0(id, "_op"), selected = if (is.null(op)) "gte" else op)
     } else {
       updateCheckboxInput(session, paste0("enable_", id), value = FALSE)
     }
@@ -213,9 +215,6 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   .select_file("highlight_pairs_file", "highlight_pairs_file")
   .select_file("annotate_pairs_file", "annotate_pairs_file")
 
-  for (id in c("zoom_x1", "zoom_x2", "zoom_y1", "zoom_y2")) {
-    updateNumericInput(session, id, value = .num(id))
-  }
   updateCheckboxInput(session, "inset", value = .bool("inset"))
   if (!is.null(.get("inset_position"))) {
     updateSelectInput(session, "inset_position", selected = .get("inset_position"))
@@ -224,6 +223,37 @@ REF_DIR <- file.path(ROOT_DIR, "data", "reference")
   updateNumericInput(session, "inset_pad_frac", value = if (is.na(inset_pad_frac)) 0.15 else inset_pad_frac)
   updateCheckboxInput(session, "zoom_annotated_only", value = .bool("zoom_annotated_only"))
   updateCheckboxInput(session, "repel_annotated_only", value = .bool("repel_annotated_only"))
+
+  # 複数inset設定(inset<N>_*キー)の反映——貼り付けられたコマンドに出て
+  # きた下標の最大値をinset_n に設定、各行のウィジェットを埋める。
+  # 1個も無ければinset_nを1に戻す(貼り付けたコマンドがlegacy単inset
+  # 形式だった場合、以前の複数inset入力が中途半端に残らないように)。
+  inset_idx_strs <- unique(sub("^inset([0-9]+)_.*$", "\\1", grep("^inset[0-9]+_", names(kv), value = TRUE)))
+  inset_idx <- as.integer(inset_idx_strs)
+  if (length(inset_idx) > 0) {
+    updateNumericInput(session, "inset_n", value = max(inset_idx))
+    for (i in inset_idx) {
+      .id <- function(suf) sprintf("inset%d_%s", i, suf)
+      pos <- .get(.id("inset_position"))
+      if (!is.null(pos)) updateSelectInput(session, .id("inset_position"), selected = pos)
+      fn <- .num(.id("frontier_n"))
+      if (!is.na(fn)) updateNumericInput(session, .id("frontier_n"), value = fn)
+      for (type in c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")) {
+        tid <- .id(paste0(type, "_threshold"))
+        v <- .num(tid)
+        if (!is.na(v)) {
+          updateCheckboxInput(session, paste0("enable_", tid), value = TRUE)
+          updateNumericInput(session, tid, value = v)
+          op <- .get(paste0(tid, "_op"))
+          updateSelectInput(session, paste0(tid, "_op"), selected = if (is.null(op)) "gte" else op)
+        } else {
+          updateCheckboxInput(session, paste0("enable_", tid), value = FALSE)
+        }
+      }
+    }
+  } else {
+    updateNumericInput(session, "inset_n", value = 1)
+  }
 }
 
 # point_label/axis_label/value_label aren't stored anywhere as English
@@ -324,16 +354,43 @@ if (is.null(.INITIAL_LABELS)) {
 # ユーザー確認済み)。新しいfilterを1個増やすのはこの呼び出しを1行増やす
 # だけ、という形にするためのヘルパー。PAIR_ONLYはedge_threshold/node_
 # dispersion_threshold用——output.is_pair_inputでさらに1段くるむ。
+# "以上(gte)"/"以下(lte)"の選択——plot_point_vs_target.R側の.resolve_
+# threshold_op()と同じ語彙(2026-11-07、>の決め打ちを>=に直した修正と
+# 対で追加)。デフォルトは常に"gte"(以上)、既存の挙動は変えない。
+.THRESHOLD_OP_CHOICES <- c("以上 (≥)" = "gte", "以下 (≤)" = "lte")
+
 .filter_control <- function(id, label, pair_only = FALSE) {
   body <- tagList(
     checkboxInput(paste0("enable_", id), paste0(label, "を有効にする"), value = FALSE),
     conditionalPanel(
       condition = paste0("input.enable_", id),
       numericInput(id, label, value = NA),
-      .cmd_toggle(id)
+      selectInput(paste0(id, "_op"), NULL, choices = .THRESHOLD_OP_CHOICES, selected = "gte"),
+      .cmd_toggle(id),
+      .cmd_toggle(paste0(id, "_op"))
     )
   )
   if (pair_only) conditionalPanel(condition = "output.is_pair_input", body) else body
+}
+
+# 複数inset設定の各行で使う、簡略版の.filter_control()——行ごとに.cmd_
+# toggle()を個別に出すと8行x5種=40個のチェックボックスになって使い物に
+# ならないので、再現コマンドへの含有は.cmd_toggle("inset_configs")一個
+# (下のUI定義参照)にまとめている。pair_only判定もここでは省略(entry/
+# concept表に対してpair専用filterを出しても、該当列が無いのでfilter_by_*
+# 側がno-opになるだけで実害は無い——むしろpair_only条件を8行分ネストする
+# 複雑さの方が割に合わない)。
+.inset_config_filter_control <- function(id, label) {
+  tagList(
+    checkboxInput(paste0("enable_", id), paste0(label, "を有効にする"), value = FALSE),
+    conditionalPanel(
+      condition = paste0("input.enable_", id),
+      fluidRow(
+        column(7, numericInput(id, label, value = NA)),
+        column(5, selectInput(paste0(id, "_op"), NULL, choices = .THRESHOLD_OP_CHOICES, selected = "gte"))
+      )
+    )
+  )
 }
 
 # サーバー側の対応するthreshold解決——有効チェックが外れていれば(値が
@@ -344,20 +401,59 @@ if (is.null(.INITIAL_LABELS)) {
   if (is.na(value)) NULL else value
 }
 
+# 対応するop(gte/lte)の解決——有効チェックが外れていればNULLを返す
+# (value自体もNULLになるので.threshold_mask/.build_repro_cmd側ではどの
+# みち参照されないが、NULLにしておくことで再現コマンドに無意味な
+# "xxx_threshold_op=gte"が、対応するxxx_threshold=が無いのに単独で
+# 印字されるのを防げる)。有効なら選択されている方をそのまま返す。
+.resolve_threshold_op_input <- function(input, id) {
+  if (!isTRUE(input[[paste0("enable_", id)]])) return(NULL)
+  v <- input[[paste0(id, "_op")]]
+  if (is.null(v)) "gte" else v
+}
+
+# 3x3罗盘格子の8个外围方位——plot_point_vs_target.R側の.INSET_GRID_CELLS
+# と同じ8个名前(2026-11-07、top/bottom/left/rightの4个からtop_right/
+# bottom_right/top_left/bottom_leftを加えて8个に拡張)。.MAX_INSETSは
+# 複数inset設定UIで出す行数の上限——8个の方位格子を同時に使い切る以上の
+# configは意味が無い(9個目を置く場所が無い)ので、UIの都合で決めた数字
+# ではなくこの格子自体の制約。
+.INSET_POSITIONS <- c("top", "top_right", "right", "bottom_right",
+                      "bottom", "bottom_left", "left", "top_left")
+.MAX_INSETS <- length(.INSET_POSITIONS)
+
 # Walked by .build_repro_cmd()'s own iteration below, and by server's
 # own excluded-keys lookup (Filter(...,  input[[paste0("cmd_incl_", k)]])
 # over this SAME list) -- one literal list, read from both places, so
 # they can never drift apart (same reasoning tune_pair_thresholds_
 # server.py's own CMD_FIELDS comment gives for deriving its list rather
 # than hand-duplicating it, ~line 505-517).
+# 5種filterそれぞれの"<type>_threshold"/"<type>_threshold_op"を1箇所の
+# 定数から生成——顶层(以下のALL_PARAM_KEYS)と複数inset設定の各行
+# (.INSET_CONFIG_SUBKEYS)で同じ命名規則を共有し、どちらかだけ直しても
+# 片方が追従し忘れることを防ぐ。
+.THRESHOLD_TYPES <- c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency")
+.threshold_key_pairs <- function() {
+  as.vector(rbind(paste0(.THRESHOLD_TYPES, "_threshold"), paste0(.THRESHOLD_TYPES, "_threshold_op")))
+}
+
+# 複数inset設定1行分のサブキー——inset<N>_<サブキー>の形でALL_PARAM_KEYS
+# に展開される(.inset_config_keys()参照)。inset_position/frontier_nに
+# 続けて5種filterのthreshold/opペア。
+.INSET_CONFIG_SUBKEYS <- c("inset_position", "frontier_n", .threshold_key_pairs())
+
+.inset_config_keys <- function() {
+  unlist(lapply(seq_len(.MAX_INSETS), function(i) sprintf("inset%d_%s", i, .INSET_CONFIG_SUBKEYS)))
+}
+
 ALL_PARAM_KEYS <- c(
   "kld_variant", "frequency_type", "point_label", "axis_label", "value_label", "badge_selection",
-  "aggregate_locators", "edge_threshold", "dispersion_threshold",
-  "node_dispersion_threshold", "frequency_threshold", "node_frequency_threshold", "frontier_n", "annotate_nontarget_only",
+  "aggregate_locators", .threshold_key_pairs(), "frontier_n", "annotate_nontarget_only",
   "annotate_point_exclude", "highlight_frontier", "annotate_words_file", "highlight_file",
-  "highlight_pairs_file", "annotate_pairs_file", "zoom_x1", "zoom_x2",
-  "zoom_y1", "zoom_y2", "inset", "inset_position", "inset_pad_frac",
-  "zoom_annotated_only", "repel_annotated_only"
+  "highlight_pairs_file", "annotate_pairs_file",
+  "inset", "inset_position", "inset_pad_frac",
+  "zoom_annotated_only", "repel_annotated_only",
+  .inset_config_keys()
 )
 
 # Pure: PARAMS (a named list, one entry per ALL_PARAM_KEYS -- already-
@@ -471,7 +567,7 @@ ui <- fluidPage(
       textInput("value_label", "value_label", .INITIAL_LABELS$value_label),
       .cmd_toggle("value_label"),
       selectInput("badge_selection", "badge_selection",
-                  choices = c("words", "zoom_box", "frontier", "pairs"), selected = "words"),
+                  choices = c("words", "frontier", "pairs"), selected = "words"),
       .cmd_toggle("badge_selection"),
       checkboxInput("aggregate_locators", "aggregate_locators", value = TRUE),
       .cmd_toggle("aggregate_locators"),
@@ -530,33 +626,16 @@ ui <- fluidPage(
         .cmd_toggle("annotate_pairs_file")
       ),
       tags$hr(),
-      tags$b("範囲設定 (zoom_box)"),
-      tags$p(style = "font-size: 0.85em; color: #666;",
-             "badge_selection=\"zoom_box\"の取景条件、または拡大表示(inset)の",
-             "拡大範囲として使われます。4つとも空欄ならデータのmin/max。"),
-      conditionalPanel(
-        condition = "input.badge_selection == 'zoom_box' || input.inset",
-        fluidRow(
-          column(6, numericInput("zoom_x1", "zoom_x1 (frequency 下限)", value = NA),
-                 .cmd_toggle("zoom_x1")),
-          column(6, numericInput("zoom_x2", "zoom_x2 (frequency 上限)", value = NA),
-                 .cmd_toggle("zoom_x2"))
-        ),
-        fluidRow(
-          column(6, numericInput("zoom_y1", "zoom_y1 (keyness 下限)", value = NA),
-                 .cmd_toggle("zoom_y1")),
-          column(6, numericInput("zoom_y2", "zoom_y2 (keyness 上限)", value = NA),
-                 .cmd_toggle("zoom_y2"))
-        )
-      ),
-      tags$hr(),
       checkboxInput("inset", "拡大表示 (inset)", value = FALSE),
       .cmd_toggle("inset"),
       conditionalPanel(
         condition = "input.inset",
-        selectInput("inset_position", "inset_position",
-                    choices = c("top", "bottom", "left", "right"), selected = "top"),
-        .cmd_toggle("inset_position"),
+        conditionalPanel(
+          condition = "input.inset_n < 2",
+          selectInput("inset_position", "inset_position",
+                      choices = .INSET_POSITIONS, selected = "top"),
+          .cmd_toggle("inset_position")
+        ),
         numericInput("inset_pad_frac", "inset_pad_frac", value = 0.15, step = 0.05),
         .cmd_toggle("inset_pad_frac"),
         checkboxInput("zoom_annotated_only", "zoom_annotated_only (拡大側は注釈された点のみ)",
@@ -564,7 +643,37 @@ ui <- fluidPage(
         .cmd_toggle("zoom_annotated_only"),
         checkboxInput("repel_annotated_only", "repel_annotated_only (repel対象も注釈された点のみ)",
                       value = FALSE),
-        .cmd_toggle("repel_annotated_only")
+        .cmd_toggle("repel_annotated_only"),
+        tags$hr(),
+        tags$b("複数inset設定 (inset_configs)"),
+        tags$p(style = "font-size: 0.85em; color: #666;",
+               "inset個数を2以上にすると、各insetごとに別々のinset_position/",
+               "frontier_n/filterを設定できます(主図は常に完全な点群を表示、",
+               "絞り込みは各insetの候補選定にのみ適用されます——edge_threshold等の",
+               "上のフィルタ欄は個数1の時だけ使われます)。"),
+        numericInput("inset_n", "inset個数", value = 1, min = 1, max = .MAX_INSETS, step = 1),
+        .cmd_toggle("inset_configs"),
+        conditionalPanel(
+          condition = "input.inset_n >= 2",
+          lapply(seq_len(.MAX_INSETS), function(i) {
+            conditionalPanel(
+              condition = sprintf("input.inset_n >= %d", i),
+              wellPanel(
+                tags$b(sprintf("inset %d (%s)", i, LETTERS[i])),
+                selectInput(sprintf("inset%d_inset_position", i), "inset_position",
+                            choices = .INSET_POSITIONS,
+                            selected = .INSET_POSITIONS[((i - 1) %% length(.INSET_POSITIONS)) + 1]),
+                numericInput(sprintf("inset%d_frontier_n", i), "frontier_n", value = 15,
+                             min = 1, step = 1),
+                .inset_config_filter_control(sprintf("inset%d_edge_threshold", i), "edge_threshold"),
+                .inset_config_filter_control(sprintf("inset%d_dispersion_threshold", i), "dispersion_threshold"),
+                .inset_config_filter_control(sprintf("inset%d_node_dispersion_threshold", i), "node_dispersion_threshold"),
+                .inset_config_filter_control(sprintf("inset%d_frequency_threshold", i), "frequency_threshold"),
+                .inset_config_filter_control(sprintf("inset%d_node_frequency_threshold", i), "node_frequency_threshold")
+              )
+            )
+          })
+        )
       )
       ),
       conditionalPanel(
@@ -720,14 +829,35 @@ server <- function(input, output, session) {
 
     input_path <- file.path(VIS_DIR, input$input_file)
     edge_threshold <- .resolve_threshold(input, "edge_threshold")
+    edge_threshold_op <- .resolve_threshold_op_input(input, "edge_threshold")
     dispersion_threshold <- .resolve_threshold(input, "dispersion_threshold")
+    dispersion_threshold_op <- .resolve_threshold_op_input(input, "dispersion_threshold")
     node_dispersion_threshold <- .resolve_threshold(input, "node_dispersion_threshold")
+    node_dispersion_threshold_op <- .resolve_threshold_op_input(input, "node_dispersion_threshold")
     frequency_threshold <- .resolve_threshold(input, "frequency_threshold")
+    frequency_threshold_op <- .resolve_threshold_op_input(input, "frequency_threshold")
     node_frequency_threshold <- .resolve_threshold(input, "node_frequency_threshold")
-    zoom_x1 <- if (is.na(input$zoom_x1)) NULL else input$zoom_x1
-    zoom_x2 <- if (is.na(input$zoom_x2)) NULL else input$zoom_x2
-    zoom_y1 <- if (is.na(input$zoom_y1)) NULL else input$zoom_y1
-    zoom_y2 <- if (is.na(input$zoom_y2)) NULL else input$zoom_y2
+    node_frequency_threshold_op <- .resolve_threshold_op_input(input, "node_frequency_threshold")
+    # inset個数が2以上の時だけ、複数inset設定(各行のinset_position/
+    # frontier_n/5种filter)を組み立てる——1個の時はこれまで通り、
+    # 上のフィルタ欄(edge_threshold等)+inset_position(単一値)で
+    # draw_point_vs_target()自身のlegacy単inset扱いに任せる。
+    inset_n <- input$inset_n
+    inset_n <- if (is.null(inset_n) || is.na(inset_n)) 1 else inset_n
+    inset_configs <- if (isTRUE(input$inset) && inset_n >= 2) {
+      lapply(seq_len(inset_n), function(i) {
+        .id <- function(suf) sprintf("inset%d_%s", i, suf)
+        list(
+          inset_position = input[[.id("inset_position")]],
+          frontier_n = input[[.id("frontier_n")]],
+          filters = setNames(lapply(c("edge", "dispersion", "node_dispersion",
+                                       "frequency", "node_frequency"), function(type) {
+            tid <- .id(paste0(type, "_threshold"))
+            list(value = .resolve_threshold(input, tid), op = .resolve_threshold_op_input(input, tid))
+          }), c("edge", "dispersion", "node_dispersion", "frequency", "node_frequency"))
+        )
+      })
+    } else NULL
     exclude_raw <- trimws(input$annotate_point_exclude)
     annotate_point_exclude <- if (exclude_raw == "") NULL else strsplit(exclude_raw, ",", fixed = TRUE)[[1]]
     annotate_words_file <- .resolve_ref_choice(REF_DIR, input$annotate_words_file)
@@ -742,10 +872,13 @@ server <- function(input, output, session) {
       value_label = input$value_label,
       badge_selection = input$badge_selection,
       aggregate_locators = input$aggregate_locators,
-      edge_threshold = edge_threshold, dispersion_threshold = dispersion_threshold,
+      edge_threshold = edge_threshold, edge_threshold_op = edge_threshold_op,
+      dispersion_threshold = dispersion_threshold, dispersion_threshold_op = dispersion_threshold_op,
       node_dispersion_threshold = node_dispersion_threshold,
-      frequency_threshold = frequency_threshold,
+      node_dispersion_threshold_op = node_dispersion_threshold_op,
+      frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
+      node_frequency_threshold_op = node_frequency_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
@@ -754,8 +887,8 @@ server <- function(input, output, session) {
       highlight_file = highlight_file,
       highlight_pairs_file = highlight_pairs_file,
       annotate_pairs_file = annotate_pairs_file,
-      zoom_x1 = zoom_x1, zoom_x2 = zoom_x2, zoom_y1 = zoom_y1, zoom_y2 = zoom_y2,
       inset = input$inset, inset_position = input$inset_position,
+      inset_configs = inset_configs,
       inset_pad_frac = input$inset_pad_frac,
       zoom_annotated_only = input$zoom_annotated_only,
       repel_annotated_only = input$repel_annotated_only
@@ -791,10 +924,13 @@ server <- function(input, output, session) {
       point_label = input$point_label, axis_label = input$axis_label,
       value_label = input$value_label, badge_selection = input$badge_selection,
       aggregate_locators = input$aggregate_locators,
-      edge_threshold = edge_threshold, dispersion_threshold = dispersion_threshold,
+      edge_threshold = edge_threshold, edge_threshold_op = edge_threshold_op,
+      dispersion_threshold = dispersion_threshold, dispersion_threshold_op = dispersion_threshold_op,
       node_dispersion_threshold = node_dispersion_threshold,
-      frequency_threshold = frequency_threshold,
+      node_dispersion_threshold_op = node_dispersion_threshold_op,
+      frequency_threshold = frequency_threshold, frequency_threshold_op = frequency_threshold_op,
       node_frequency_threshold = node_frequency_threshold,
+      node_frequency_threshold_op = node_frequency_threshold_op,
       frontier_n = input$frontier_n,
       annotate_nontarget_only = input$annotate_nontarget_only,
       annotate_point_exclude = annotate_point_exclude,
@@ -803,14 +939,38 @@ server <- function(input, output, session) {
       highlight_file = .rel_ref(input$highlight_file),
       highlight_pairs_file = .rel_ref(input$highlight_pairs_file),
       annotate_pairs_file = .rel_ref(input$annotate_pairs_file),
-      zoom_x1 = zoom_x1, zoom_x2 = zoom_x2, zoom_y1 = zoom_y1, zoom_y2 = zoom_y2,
       inset = input$inset, inset_position = input$inset_position,
       inset_pad_frac = input$inset_pad_frac,
       zoom_annotated_only = input$zoom_annotated_only,
       repel_annotated_only = input$repel_annotated_only
     )
+    # 複数inset設定の各キーをcmd_paramsに平らに追加——inset_configsが
+    # NULL(個数1)の時は何も足さず、ALL_PARAM_KEYSに載っているinset<N>_*
+    # キーは.build_repro_cmd()側でparams[[key]]がNULLなら自動的にスキップ
+    # される(既存の仕組みそのまま、ここで特別扱いする必要はない)。
+    if (!is.null(inset_configs)) {
+      for (i in seq_along(inset_configs)) {
+        .id <- function(suf) sprintf("inset%d_%s", i, suf)
+        cfg <- inset_configs[[i]]
+        cmd_params[[.id("inset_position")]] <- cfg$inset_position
+        cmd_params[[.id("frontier_n")]] <- cfg$frontier_n
+        for (type in names(cfg$filters)) {
+          tid <- .id(paste0(type, "_threshold"))
+          cmd_params[[tid]] <- cfg$filters[[type]]$value
+          cmd_params[[paste0(tid, "_op")]] <- cfg$filters[[type]]$op
+        }
+      }
+    }
+    # inset<N>_*キーはALL_PARAM_KEYSに8行x11キー分あるが、1個ずつ
+    # 「再現コマンドに含める」トグルを出すのは非現実的なので、
+    # .cmd_toggle("inset_configs")(id: cmd_incl_inset_configs)一個が
+    # その全部をまとめて制御する。
     excluded_keys <- Filter(
-      function(k) isFALSE(input[[paste0("cmd_incl_", k)]]), ALL_PARAM_KEYS
+      function(k) {
+        if (grepl("^inset[0-9]+_", k)) isFALSE(input[["cmd_incl_inset_configs"]])
+        else isFALSE(input[[paste0("cmd_incl_", k)]])
+      },
+      ALL_PARAM_KEYS
     )
     cmd <- .build_repro_cmd(
       file.path("data", "processed", "visualization", input$input_file),
