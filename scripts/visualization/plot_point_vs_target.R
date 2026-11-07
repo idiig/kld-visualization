@@ -1416,27 +1416,13 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   marks_in
 }
 
-# PENDING/MARKS_IN现在都是"按网络面板分组"的list(2026-11-07起)——
-# PENDING[[i]]是第i个退化成网络面板的panel自己的待拼接清单(.draw_badges()
-# 收集，每条含graphviz的svg_txt+目标inches区域)，MARKS_IN[[i]]是那同一个
-# panel自己的.draw_svg_calibration_marks()标记坐标(一对inches坐标)。
-# 之所以要按面板分组、不能像旧版那样全局共用一份标记：每个inset panel
-# 在画布上的par(fig=...)子区域位置不同，同一组局部inches坐标(比如panel
-# 自己(0.15,0.15)这个角)对应到最终svg像素坐标的仿射变换(尤其OFFSET，
-# SCALE理论上各panel一致都是72/-72)其实是不同的——用哪个panel的标记反解
-# 出的变换，就只对那个panel自己的pending内容准(2026-11-07实测验证：
-# 之前"多个网络面板直接stop()"的那条限制，根源就是全局只反解一份变换、
-# 拿去套用在所有面板的pending上，对除最后一个面板外的其它面板位置全错，
-# 不是网络面板本身不能共存)。每组各自反解自己的SCALE/OFFSET、各自拼接
-# 自己的blocks，最后把所有组的blocks一次性插入主svg——校准标记的个数
-# 因此是2*length(pending)(每组2个)，不再是固定2个。单面板场景下
-# length(pending)==1，这就退化回跟改动前完全一样的单组计算，不产生任何
-# 像素级差异。
-# 每个嵌套svg元素的拼法不变：graphviz整段svg内容当成一个嵌套<svg x y
-# width height viewBox>元素插入主文件(SVG标准支持svg嵌套，嵌套元素会按
-# 自己的viewBox自动缩放去填满给定的width/height，不需要手算transform
-# 矩阵)，取自己的<g ...>到</svg>之间的内容、丢掉graphviz自己的<?xml?>/
-# <!DOCTYPE>/外层<svg>标签。
+# pending(.draw_badges()收集的待拼接清单，每条含graphviz的svg_txt+目标
+# inches区域)拼接进已经写盘的主svg文件——graphviz的svg内容整段当成一个
+# 嵌套<svg x y width height viewBox>元素插入主文件(SVG标准支持svg嵌套，
+# 嵌套元素会按自己的viewBox自动缩放去填满给定的width/height，不需要手算
+# transform矩阵)，取自己的<g ...>到</svg>之间的内容、丢掉graphviz自己的
+# <?xml?>/<!DOCTYPE>/外层<svg>标签。marks_in是.draw_svg_calibration_marks()
+# 画标记时用的同一组inches坐标，用来反解仿射变换。
 .splice_network_glyphs <- function(output, pending, marks_in) {
   if (length(pending) == 0) return(invisible(NULL))
   if (!grepl("\\.svg$", output, ignore.case = TRUE)) {
@@ -1446,48 +1432,42 @@ filter_to_annotated_points <- function(rows, badge_rows) {
   svg_txt <- paste(readLines(output, encoding = "UTF-8", warn = FALSE), collapse = "\n")
   lines_all <- strsplit(svg_txt, "\n")[[1]]
   mark_lines <- grep("0.392157%, 0.784314%, 1.176471%", lines_all, fixed = TRUE, value = TRUE)
-  expected_marks <- 2 * length(pending)
-  if (length(mark_lines) != expected_marks) {
-    stop(sprintf("找不到svg校准标记(应该有%d个，每个网络面板自己2个)，网络badge拼接失败——可能是svg输出格式变了",
-                 expected_marks))
+  if (length(mark_lines) != 2) {
+    stop("找不到svg校准标记(应该有2个)，网络badge拼接失败——可能是svg输出格式变了")
   }
   get_center <- function(line) {
     d_str <- sub('.*d="([^"]*)".*', "\\1", line)
     nums <- as.numeric(regmatches(d_str, gregexpr("[0-9]+\\.?[0-9]*", d_str))[[1]])
     c(mean(nums[c(1, 3)]), mean(nums[c(2, 6)]))
   }
+  raw1 <- get_center(mark_lines[1]); raw2 <- get_center(mark_lines[2])
+  in1 <- marks_in[[1]]; in2 <- marks_in[[2]]
+  scale_x <- (raw2[1] - raw1[1]) / (in2[1] - in1[1])
+  scale_y <- (raw2[2] - raw1[2]) / (in2[2] - in1[2])
+  if (abs(scale_x - 72) > 0.5 || abs(scale_y + 72) > 0.5) {
+    stop(sprintf("svg校准标记反解出的scale(%.3f, %.3f)偏离预期的(72, -72)太多，网络badge拼接的坐标换算前提不成立，需要重新核对",
+                 scale_x, scale_y))
+  }
+  offset_x <- raw1[1] - scale_x * in1[1]
+  offset_y <- raw1[2] - scale_y * in1[2]
+  affine_x <- function(ix) scale_x * ix + offset_x
+  affine_y <- function(iy) scale_y * iy + offset_y
+
   lines_all <- lines_all[!grepl("0.392157%, 0.784314%, 1.176471%", lines_all, fixed = TRUE)]
 
-  all_blocks <- character(0)
-  for (i in seq_along(pending)) {
-    raw1 <- get_center(mark_lines[2 * i - 1]); raw2 <- get_center(mark_lines[2 * i])
-    in1 <- marks_in[[i]][[1]]; in2 <- marks_in[[i]][[2]]
-    scale_x <- (raw2[1] - raw1[1]) / (in2[1] - in1[1])
-    scale_y <- (raw2[2] - raw1[2]) / (in2[2] - in1[2])
-    if (abs(scale_x - 72) > 0.5 || abs(scale_y + 72) > 0.5) {
-      stop(sprintf("面板%d的svg校准标记反解出的scale(%.3f, %.3f)偏离预期的(72, -72)太多，网络badge拼接的坐标换算前提不成立，需要重新核对",
-                   i, scale_x, scale_y))
-    }
-    offset_x <- raw1[1] - scale_x * in1[1]
-    offset_y <- raw1[2] - scale_y * in1[2]
-    affine_x <- function(ix) scale_x * ix + offset_x
-    affine_y <- function(iy) scale_y * iy + offset_y
-
-    blocks <- vapply(pending[[i]], function(p) {
-      x1_raw <- affine_x(p$x1_in)
-      y_top_raw <- affine_y(p$y1_in + p$h_in)
-      w_raw <- p$w_in * 72
-      h_raw <- p$h_in * 72
-      inner <- sub("^.*?(<g )", "\\1", p$svg_txt)
-      inner <- sub("</svg>\\s*$", "", inner)
-      sprintf('<svg x="%f" y="%f" width="%f" height="%f" viewBox="0 0 %f %f">\n%s\n</svg>',
-              x1_raw, y_top_raw, w_raw, h_raw, p$gv_w_pt, p$gv_h_pt, inner)
-    }, character(1))
-    all_blocks <- c(all_blocks, blocks)
-  }
+  blocks <- vapply(pending, function(p) {
+    x1_raw <- affine_x(p$x1_in)
+    y_top_raw <- affine_y(p$y1_in + p$h_in)
+    w_raw <- p$w_in * 72
+    h_raw <- p$h_in * 72
+    inner <- sub("^.*?(<g )", "\\1", p$svg_txt)
+    inner <- sub("</svg>\\s*$", "", inner)
+    sprintf('<svg x="%f" y="%f" width="%f" height="%f" viewBox="0 0 %f %f">\n%s\n</svg>',
+            x1_raw, y_top_raw, w_raw, h_raw, p$gv_w_pt, p$gv_h_pt, inner)
+  }, character(1))
 
   svg_txt <- paste(lines_all, collapse = "\n")
-  svg_txt <- sub("</svg>\\s*$", paste0(paste(all_blocks, collapse = "\n"), "\n</svg>\n"), svg_txt)
+  svg_txt <- sub("</svg>\\s*$", paste0(paste(blocks, collapse = "\n"), "\n</svg>\n"), svg_txt)
   writeLines(svg_txt, output, useBytes = TRUE)
   invisible(NULL)
 }
@@ -2510,13 +2490,10 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
 # BUNDLES是.resolve_inset_bundles()产出的list，长度>=1；长度1时就是原来
 # 单inset的legacy路径(bundles[[1]]$label==""，不画字母/filter说明以外的
 # 任何额外元素，投影虚线正常画)。长度>1时：每个bundle在主图上有自己的
-# 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)。任一个或多个
-# bundle退化成single_locator(网络图面板)不再stop()——2026-11-07起
-# .splice_network_glyphs()按面板分组各自的校准标记+仿射变换(每个网络
-# 面板自己的2个标记，不再全局共用一份)，同一张图里可以同时有多个网络
-# 面板(以及普通散点放大面板)共存，见该函数自己的docstring。(main repo
-# 的同一处修复原样搬过来，这里当初的stop()理由本就是"为了跟main-repo
-# 行为一致"，main-repo的限制解除后这里也一并解除。)
+# 虚线指示框(字母+轮换的lty)，不画投影虚线(多组线交叉太乱)，任一bundle
+# 退化成single_locator(网络图面板)直接stop()——igraph渲染路径本身对多个
+# 网络图面板没有main-repo那种SVG校准标记限制，但为了跟main-repo的行为
+# 保持一致、避免用户在两个仓库之间得到不同的报错/成功结果，这里同样拒绝。
 .render_with_insets <- function(d, bundles, colors, output, ranges, breaks, neutral, nofreq,
                                  axis_label, point_label, value_label, not_value_label,
                                  default_label, badge_selection, badge_layout,
@@ -2527,6 +2504,12 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                  kld_variant = NULL) {
   multi <- length(bundles) > 1
   single_locator_flags <- vapply(bundles, function(b) .is_single_locator(b$badge_rows), logical(1))
+  if (multi && any(single_locator_flags)) {
+    bad_labels <- vapply(bundles[single_locator_flags], `[[`, "", "label")
+    stop("多个inset同时渲染时，不支持某个config的候选点全部落在同一个locator、",
+         "退化成网络图(字母: ", paste(bad_labels, collapse = ", "),
+         ")——请调整该config的filter/frontier_n，或改成只渲染一个inset")
+  }
 
   positions <- vapply(bundles, `[[`, "", "inset_position")
   lay <- .inset_grid_layout(positions)
@@ -2550,11 +2533,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
                                              colors, default_label, kld_variant = kld_variant,
                                              box_labels = box_labels, box_ltys = box_ltys)
 
-  # all_pending/all_marks_in：每个退化成网络面板的panel各占一组(不再
-  # flatten成一份共用列表/覆盖成一份共用标记)——.splice_network_glyphs()
-  # 需要按组各自反解仿射变换，见该函数自己的docstring。
   all_pending <- list()
-  all_marks_in <- list()
+  all_marks_in <- NULL
   single_dest_ndc_x <- NULL
   single_dest_ndc_y <- NULL
   for (i in seq_along(bundles)) {
@@ -2583,9 +2563,8 @@ render_zoomed_scatter_panel <- function(d, badge_rows, tie_box_rows, zbox, range
       par(old_mar)
     }
     if (length(panel$pending) > 0) {
-      all_pending[[length(all_pending) + 1]] <- panel$pending
-      all_marks_in[[length(all_marks_in) + 1]] <-
-        .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
+      all_pending <- c(all_pending, panel$pending)
+      all_marks_in <- .draw_svg_calibration_marks(panel$in_to_data_x, panel$in_to_data_y, panel$pin)
     }
     if (!multi) {
       single_dest_ndc_x <- panel$dest_ndc_x
